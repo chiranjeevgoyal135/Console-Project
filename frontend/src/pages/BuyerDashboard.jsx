@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { getSuggestions } from "../api/api.js";
 import CheckoutModal from "./CheckoutModal.jsx";
+import RecipeAgent from "./RecipeAgent.jsx";
 
 // Fetch nearest shops from backend
 async function fetchNearestShops(lat, lng) {
@@ -18,6 +19,7 @@ export default function BuyerDashboard({ user, onLogout }) {
   const [locStatus,   setLocStatus]   = useState("detecting"); // detecting | found | denied
   const [showShops,   setShowShops]   = useState(false);
   const [showCheckout, setShowCheckout] = useState(false);
+  const [showRecipe, setShowRecipe] = useState(false);
   const debounceRef = useRef(null);
 
   // On mount — ask for location and find nearest shop
@@ -78,6 +80,16 @@ export default function BuyerDashboard({ user, onLogout }) {
   const cartCount    = cart.reduce((s, c) => s + c.qty, 0);
   const deliveryFee  = shopInfo ? shopInfo.deliveryFee : 0;
   const grandTotal   = cartTotal + deliveryFee;
+
+  function addToCartFromRecipe(items) {
+    items.forEach(item => {
+      setCart(prev => {
+        const exists = prev.find(c => c.name === item.name);
+        if (exists) return prev.map(c => c.name === item.name ? { ...c, qty: c.qty + 1 } : c);
+        return [...prev, { ...item, qty: 1 }];
+      });
+    });
+  }
 
   return (
     <div style={s.page}>
@@ -175,6 +187,11 @@ export default function BuyerDashboard({ user, onLogout }) {
             )}
           </div>
 
+          {/* Recipe Agent button */}
+          <button style={s.recipeBtn} onClick={() => setShowRecipe(true)}>
+            🤖 Recipe Agent — type a dish, get all ingredients instantly
+          </button>
+
           {/* Suggestions */}
           <div style={s.resultsBox}>
             {searching && (
@@ -271,6 +288,12 @@ export default function BuyerDashboard({ user, onLogout }) {
           )}
         </div>
       </div>
+      {showRecipe && (
+        <RecipeAgent
+          onAddToCart={addToCartFromRecipe}
+          onClose={() => setShowRecipe(false)}
+        />
+      )}
       {showCheckout && (
         <CheckoutModal
           cart={cart}
@@ -351,15 +374,14 @@ const s = {
   summaryTotal:   { fontSize: 15, fontWeight: 700, color: "#1a1a1a", marginTop: 4 },
   totalAmt:       { color: "#f6a623", fontSize: 17 },
   deliveryNote:   { background: "#fff8ee", border: "1px solid #f6a62322", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#888", marginBottom: 12, textAlign: "center" },
+  recipeBtn:     { width:"100%",padding:"12px 16px",borderRadius:12,border:"2px dashed #f6a62366",background:"linear-gradient(135deg,#fff8ee,#fffdf7)",color:"#f6a623",fontSize:14,fontWeight:700,cursor:"pointer",marginBottom:14,textAlign:"center" },
   checkoutBtn:    { width: "100%", padding: 14, borderRadius: 12, border: "none", background: "linear-gradient(135deg,#f6a623,#f97316)", color: "#000", fontSize: 15, fontWeight: 700, cursor: "pointer" },
 };
 
 // ── PATCH: add this to the top of BuyerDashboard.jsx ──
 // 1. Add this import at the top:
-//    import CheckoutModal from "./CheckoutModal.jsx";
 //
 // 2. Add this state inside the component:
-//    const [showCheckout, setShowCheckout] = useState(false);
 //
 // 3. Replace the <button style={s.checkoutBtn}> line with:
 //    <button style={s.checkoutBtn} onClick={() => cart.length > 0 && setShowCheckout(true)}>
