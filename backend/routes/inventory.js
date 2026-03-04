@@ -1,62 +1,61 @@
-// ============================================================
-//  routes/inventory.js  —  Seller Inventory Routes
-//
-//  GET  /api/inventory          → fetch all inventory items
-//  POST /api/inventory/update   → update stock via barcode
-//    Body: { barcode, quantity, action }   action = "add" | "remove"
-//
-//  Interview explanation:
-//    - GET is used to READ data (safe, no side effects)
-//    - POST is used to MODIFY data
-//    - We find the item by barcode (acts like a product ID)
-//    - This simulates what a barcode scanner would trigger
-// ============================================================
-
+// routes/inventory.js
 const express   = require("express");
 const router    = express.Router();
 const inventory = require("../data/inventory");
 
-// GET /api/inventory  — return full inventory list
+// GET /api/inventory — return all products
 router.get("/", (req, res) => {
-  res.status(200).json({ success: true, inventory });
+  res.json({ success: true, inventory });
 });
 
-// POST /api/inventory/update  — update stock by barcode
+// GET /api/inventory/barcode/:code — look up single product by barcode
+router.get("/barcode/:code", (req, res) => {
+  const product = inventory.find(p => p.barcode === req.params.code);
+  if (!product) return res.status(404).json({ success: false, message: "Barcode not found in system." });
+  res.json({ success: true, product });
+});
+
+// POST /api/inventory/update — update stock for one barcode
+// body: { barcode, action: "add"|"set"|"subtract", quantity }
 router.post("/update", (req, res) => {
-  const { barcode, quantity, action } = req.body;
-
-  if (!barcode || !quantity || !action) {
-    return res.status(400).json({
-      success: false,
-      message: "barcode, quantity and action are required.",
-    });
-  }
-
+  const { barcode, action, quantity } = req.body;
   const qty = parseInt(quantity);
-  if (isNaN(qty) || qty <= 0) {
-    return res.status(400).json({ success: false, message: "Quantity must be a positive number." });
+
+  if (!barcode || !action || isNaN(qty) || qty < 0) {
+    return res.status(400).json({ success: false, message: "barcode, action and quantity required." });
   }
 
-  // Find the item with matching barcode
-  const item = inventory.find((i) => i.id === barcode);
-  if (!item) {
-    return res.status(404).json({ success: false, message: "Product with this barcode not found." });
-  }
+  const product = inventory.find(p => p.barcode === barcode);
+  if (!product) return res.status(404).json({ success: false, message: "Barcode not found." });
 
-  // Mutate the in-memory array (in production: update the database)
-  if (action === "add") {
-    item.stock += qty;
-  } else if (action === "remove") {
-    item.stock = Math.max(0, item.stock - qty);  // never go below 0
-  } else {
-    return res.status(400).json({ success: false, message: 'Action must be "add" or "remove".' });
-  }
+  const before = product.stock;
+  if      (action === "add")      product.stock = Math.max(0, product.stock + qty);
+  else if (action === "subtract") product.stock = Math.max(0, product.stock - qty);
+  else if (action === "set")      product.stock = qty;
+  else return res.status(400).json({ success: false, message: "action must be add, subtract or set." });
 
-  return res.status(200).json({
-    success: true,
-    message: `Stock ${action === "add" ? "increased" : "decreased"} by ${qty}.`,
-    updatedItem: item,
-  });
+  console.log(`Stock update: ${product.name} | ${before} → ${product.stock} (${action} ${qty})`);
+  res.json({ success: true, product, before, after: product.stock });
+});
+
+// POST /api/inventory/bulk — update multiple barcodes at once
+// body: { updates: [{ barcode, action, quantity }] }
+router.post("/bulk", (req, res) => {
+  const { updates } = req.body;
+  if (!Array.isArray(updates)) return res.status(400).json({ success: false, message: "updates array required." });
+
+  const results = [];
+  for (const u of updates) {
+    const product = inventory.find(p => p.barcode === u.barcode);
+    if (!product) { results.push({ barcode: u.barcode, success: false, message: "Not found" }); continue; }
+    const before = product.stock;
+    const qty    = parseInt(u.quantity) || 0;
+    if      (u.action === "add")      product.stock = Math.max(0, product.stock + qty);
+    else if (u.action === "subtract") product.stock = Math.max(0, product.stock - qty);
+    else if (u.action === "set")      product.stock = qty;
+    results.push({ barcode: u.barcode, name: product.name, before, after: product.stock, success: true });
+  }
+  res.json({ success: true, results });
 });
 
 module.exports = router;
