@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { getSuggestions } from "../api/api.js";
+import CheckoutModal from "./CheckoutModal.jsx";
 
 // Fetch nearest shops from backend
 async function fetchNearestShops(lat, lng) {
@@ -16,6 +17,7 @@ export default function BuyerDashboard({ user, onLogout }) {
   const [allShops,    setAllShops]    = useState([]);
   const [locStatus,   setLocStatus]   = useState("detecting"); // detecting | found | denied
   const [showShops,   setShowShops]   = useState(false);
+  const [showCheckout, setShowCheckout] = useState(false);
   const debounceRef = useRef(null);
 
   // On mount — ask for location and find nearest shop
@@ -262,13 +264,21 @@ export default function BuyerDashboard({ user, onLogout }) {
                 </div>
               )}
 
-              <button style={s.checkoutBtn}>
+              <button style={s.checkoutBtn} onClick={() => setShowCheckout(true)}>
                 Proceed to Checkout →
               </button>
             </>
           )}
         </div>
       </div>
+      {showCheckout && (
+        <CheckoutModal
+          cart={cart}
+          shopInfo={shopInfo}
+          onClose={() => setShowCheckout(false)}
+          onSuccess={() => { setCart([]); }}
+        />
+      )}
     </div>
   );
 }
@@ -343,3 +353,23 @@ const s = {
   deliveryNote:   { background: "#fff8ee", border: "1px solid #f6a62322", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#888", marginBottom: 12, textAlign: "center" },
   checkoutBtn:    { width: "100%", padding: 14, borderRadius: 12, border: "none", background: "linear-gradient(135deg,#f6a623,#f97316)", color: "#000", fontSize: 15, fontWeight: 700, cursor: "pointer" },
 };
+
+// ── PATCH: add this to the top of BuyerDashboard.jsx ──
+// 1. Add this import at the top:
+//    import CheckoutModal from "./CheckoutModal.jsx";
+//
+// 2. Add this state inside the component:
+//    const [showCheckout, setShowCheckout] = useState(false);
+//
+// 3. Replace the <button style={s.checkoutBtn}> line with:
+//    <button style={s.checkoutBtn} onClick={() => cart.length > 0 && setShowCheckout(true)}>
+//      Proceed to Checkout →
+//    </button>
+//    {showCheckout && (
+//      <CheckoutModal
+//        cart={cart}
+//        shopInfo={shopInfo}
+//        onClose={() => setShowCheckout(false)}
+//        onSuccess={() => { setCart([]); }}
+//      />
+//    )}

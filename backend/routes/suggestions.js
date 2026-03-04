@@ -40,7 +40,10 @@ router.get("/", async (req, res) => {
     const rawText = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content || "").trim();
     console.log("Groq response:", rawText);
 
-    const cleaned = rawText.replace(/```json|```/gi, "").trim();
+    let cleaned = rawText.replace(/```json|```/gi, "").trim();
+// Fix common Groq JSON errors: missing commas between objects
+cleaned = cleaned.replace(/\}\s*\(\s*\{/g, "},{");
+cleaned = cleaned.replace(/\}\s*\{/g, "},{");
 
     var parsed;
     try {
