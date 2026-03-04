@@ -2,30 +2,25 @@ require("dotenv").config();
 const express = require("express");
 const cors    = require("cors");
 
-const authRoutes        = require("./routes/auth");
-const inventoryRoutes   = require("./routes/inventory");
-const suggestionsRoutes = require("./routes/suggestions");
-const shopsRoutes       = require("./routes/shops");
-const paymentRoutes     = require("./routes/payment");
-const recipeRoutes      = require("./routes/recipe");
-
 const app  = express();
 const PORT = 5000;
-
 app.use(cors());
 app.use(express.json());
 
-app.use("/api/auth",        authRoutes);
-app.use("/api/inventory",   inventoryRoutes);
-app.use("/api/suggestions", suggestionsRoutes);
-app.use("/api/shops",       shopsRoutes);
-app.use("/api/payment",     paymentRoutes);
-app.use("/api/recipe",      recipeRoutes);
+app.use("/api/auth",             require("./routes/auth"));
+app.use("/api/inventory",        require("./routes/inventory"));
+app.use("/api/suggestions",      require("./routes/suggestions"));
+app.use("/api/shops",            require("./routes/shops"));
+app.use("/api/payment",          require("./routes/payment"));
+app.use("/api/recipe",           require("./routes/recipe"));
+app.use("/api/similar",          require("./routes/similar"));
+app.use("/api/cart-suggestions", require("./routes/cart-suggestions"));
 
-app.get("/", (req, res) => res.json({ message: "Smarter Blinkit API running ✅" }));
+app.get("/", (req, res) => res.json({ message: "Smarter Blinkit API ✅" }));
 
 app.listen(PORT, () => {
-  console.log("Backend running at http://localhost:" + PORT);
-  console.log("Groq Key:      ", process.env.GROQ_API_KEY    ? "YES ✅" : "NO ❌");
-  console.log("Razorpay Key:  ", process.env.RAZORPAY_KEY_ID ? "YES ✅" : "NO ❌ (mock mode)");
+  console.log("Backend at http://localhost:" + PORT);
+  console.log("Groq:    ", process.env.GROQ_API_KEY    ? "✅" : "❌");
+  console.log("Neo4j:   ", process.env.NEO4J_URI        ? "✅" : "❌ (fallback)");
+  console.log("Razorpay:", process.env.RAZORPAY_KEY_ID  ? "✅" : "❌ (mock)");
 });

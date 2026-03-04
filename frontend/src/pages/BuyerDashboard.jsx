@@ -1,64 +1,68 @@
 import { useState, useEffect, useRef } from "react";
-import { getSuggestions } from "../api/api.js";
 import CheckoutModal from "./CheckoutModal.jsx";
-import RecipeAgent from "./RecipeAgent.jsx";
+import RecipeAgent   from "./RecipeAgent.jsx";
+import ProductModal  from "./ProductModal.jsx";
+import CartPage      from "./CartPage.jsx";
 
-// Fetch nearest shops from backend
 async function fetchNearestShops(lat, lng) {
   const res = await fetch(`http://localhost:5000/api/shops/nearest?lat=${lat}&lng=${lng}`);
   return res.json();
 }
 
+async function getSuggestions(query) {
+  const res  = await fetch("http://localhost:5000/api/suggestions", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  });
+  return res.json();
+}
+
 export default function BuyerDashboard({ user, onLogout }) {
-  const [query,       setQuery]       = useState("");
-  const [suggestions, setSuggestions] = useState([]);
-  const [cart,        setCart]        = useState([]);
-  const [searching,   setSearching]   = useState(false);
-  const [shopInfo,    setShopInfo]    = useState(null);   // nearest shop
-  const [allShops,    setAllShops]    = useState([]);
-  const [locStatus,   setLocStatus]   = useState("detecting"); // detecting | found | denied
-  const [showShops,   setShowShops]   = useState(false);
-  const [showCheckout, setShowCheckout] = useState(false);
-  const [showRecipe, setShowRecipe] = useState(false);
+  const [query,          setQuery]          = useState("");
+  const [suggestions,    setSuggestions]    = useState([]);
+  const [cart,           setCart]           = useState([]);
+  const [loading,        setLoading]        = useState(false);
+  const [shopInfo,       setShopInfo]       = useState(null);
+  const [allShops,       setAllShops]       = useState([]);
+  const [locStatus,      setLocStatus]      = useState("detecting");
+  const [showShops,      setShowShops]      = useState(false);
+  const [showCheckout,   setShowCheckout]   = useState(false);
+  const [showRecipe,     setShowRecipe]     = useState(false);
+  const [selectedProduct,setSelectedProduct]= useState(null);
+  const [showCart,       setShowCart]       = useState(false);
   const debounceRef = useRef(null);
 
-  // On mount — ask for location and find nearest shop
+  // Location detection
   useEffect(() => {
-    if (!navigator.geolocation) {
-      setLocStatus("denied");
-      return;
-    }
+    if (!navigator.geolocation) { setLocStatus("denied"); return; }
     navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        const { latitude: lat, longitude: lng } = pos.coords;
+      async pos => {
         try {
-          const data = await fetchNearestShops(lat, lng);
-          if (data.success) {
+          const data = await fetchNearestShops(pos.coords.latitude, pos.coords.longitude);
+          if (data.success && data.nearest) {
             setShopInfo(data.nearest);
-            setAllShops(data.allShops);
+            setAllShops(data.all || []);
             setLocStatus("found");
           }
-        } catch {
-          setLocStatus("denied");
-        }
+        } catch { setLocStatus("denied"); }
       },
       () => setLocStatus("denied"),
       { timeout: 8000 }
     );
   }, []);
 
-  // Debounced AI search
+  // AI search with debounce
   useEffect(() => {
     if (!query.trim()) { setSuggestions([]); return; }
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
-      setSearching(true);
+      setLoading(true);
       try {
         const data = await getSuggestions(query);
         setSuggestions(data.matched ? data.suggestions : []);
       } catch { setSuggestions([]); }
-      finally { setSearching(false); }
-    }, 500);
+      setLoading(false);
+    }, 600);
   }, [query]);
 
   function addToCart(item) {
@@ -69,225 +73,180 @@ export default function BuyerDashboard({ user, onLogout }) {
     });
   }
 
-  function changeQty(name, delta) {
-    setCart(prev =>
-      prev.map(c => c.name === name ? { ...c, qty: c.qty + delta } : c)
-          .filter(c => c.qty > 0)
-    );
+  function addToCartFromRecipe(items) {
+    items.forEach(item => addToCart(item));
   }
 
-  const cartTotal    = cart.reduce((s, c) => s + c.price * c.qty, 0);
-  const cartCount    = cart.reduce((s, c) => s + c.qty, 0);
-  const deliveryFee  = shopInfo ? shopInfo.deliveryFee : 0;
-  const grandTotal   = cartTotal + deliveryFee;
+  const cartCount = cart.reduce((s, i) => s + i.qty, 0);
 
-  function addToCartFromRecipe(items) {
-    items.forEach(item => {
-      setCart(prev => {
-        const exists = prev.find(c => c.name === item.name);
-        if (exists) return prev.map(c => c.name === item.name ? { ...c, qty: c.qty + 1 } : c);
-        return [...prev, { ...item, qty: 1 }];
-      });
-    });
+  // Show CartPage as a full screen
+  if (showCart) {
+    return (
+      <>
+        <CartPage
+          cart={cart}
+          setCart={setCart}
+          shopInfo={shopInfo}
+          onBack={() => setShowCart(false)}
+          onCheckout={() => { setShowCart(false); setShowCheckout(true); }}
+        />
+        {showCheckout && (
+          <CheckoutModal
+            cart={cart}
+            shopInfo={shopInfo}
+            onClose={() => setShowCheckout(false)}
+            onSuccess={() => setCart([])}
+          />
+        )}
+      </>
+    );
   }
 
   return (
     <div style={s.page}>
-      {/* ── HEADER ── */}
+      {/* HEADER */}
       <div style={s.header}>
-        <div style={s.headerLeft}>
-          <span style={s.logo}>⚡ SmarterBlinkit</span>
-          {/* Location pill */}
-          {locStatus === "detecting" && (
-            <div style={s.locPill}>📍 Detecting location...</div>
-          )}
-          {locStatus === "found" && shopInfo && (
-            <div style={{ ...s.locPill, ...s.locFound }} onClick={() => setShowShops(!showShops)}
-              title="Click to see all nearby shops">
-              📍 Delivering in <strong style={{ color: "#f6a623" }}>&nbsp;{shopInfo.deliveryMins} mins</strong>
-              &nbsp;· {shopInfo.city} &nbsp;▾
-            </div>
-          )}
-          {locStatus === "denied" && (
-            <div style={{ ...s.locPill, ...s.locDenied }}>📍 Location unavailable</div>
-          )}
+        <span style={s.logo}>⚡ SmarterBlinkit</span>
+
+        {/* Location pill */}
+        <div style={s.locPill} onClick={() => setShowShops(!showShops)}>
+          {locStatus === "found" && shopInfo
+            ? <>📍 Delivering in <strong style={{color:"#f6a623"}}>&nbsp;{shopInfo.deliveryMins} mins</strong>&nbsp;· {shopInfo.city} ▾</>
+            : locStatus === "detecting" ? "📍 Detecting location..." : "📍 Location unavailable"}
         </div>
+
+        {showShops && allShops.length > 0 && (
+          <div style={s.shopDropdown}>
+            {allShops.slice(0,5).map((shop,i) => (
+              <div key={i} style={{ ...s.shopOption, ...(i===0?s.shopOptionFirst:{}) }}
+                onClick={() => { setShopInfo(shop); setShowShops(false); }}>
+                <span>{shop.name}</span>
+                <span style={s.shopMeta}>{shop.distanceKm}km · {shop.deliveryMins}m · ₹{shop.deliveryFee}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div style={s.headerRight}>
           <span style={s.userName}>👤 {user.name}</span>
+
+          {/* Cart button */}
+          <button style={s.cartBtn} onClick={() => setShowCart(true)}>
+            🛒 Cart
+            {cartCount > 0 && <span style={s.cartBadge}>{cartCount}</span>}
+          </button>
+
           <button style={s.logoutBtn} onClick={onLogout}>Logout</button>
         </div>
       </div>
 
-      {/* ── SHOP DROPDOWN ── */}
-      {showShops && allShops.length > 0 && (
-        <div style={s.shopDropdown}>
-          <p style={s.shopDropTitle}>🏪 Shops ranked by distance from you</p>
-          {allShops.slice(0, 5).map((shop, i) => (
-            <div key={shop.id} style={{ ...s.shopRow, ...(i === 0 ? s.shopRowBest : {}) }}>
-              <div>
-                <div style={s.shopName}>{i === 0 ? "⭐ " : ""}{shop.name}</div>
-                <div style={s.shopAddr}>{shop.address}</div>
-              </div>
-              <div style={s.shopMeta}>
-                <span style={s.shopDist}>{shop.distanceKm} km</span>
-                <span style={s.shopTime}>{shop.deliveryMins} min · ₹{shop.deliveryFee}</span>
-              </div>
-            </div>
-          ))}
-          <button style={s.closeShops} onClick={() => setShowShops(false)}>Close ✕</button>
-        </div>
-      )}
-
+      {/* BODY */}
       <div style={s.body}>
-        {/* ── MAIN CONTENT ── */}
-        <div style={s.main}>
-          <h2 style={s.greeting}>Hello {user.name.split(" ")[0]}! 👋</h2>
-          <p style={s.sub}>What do you need today?</p>
 
-          {/* Nearest shop banner */}
-          {locStatus === "found" && shopInfo && (
-            <div style={s.shopBanner}>
-              <div style={s.bannerLeft}>
-                <span style={s.bannerIcon}>🏪</span>
-                <div>
-                  <div style={s.bannerName}>{shopInfo.name}</div>
-                  <div style={s.bannerAddr}>{shopInfo.address}</div>
-                </div>
-              </div>
-              <div style={s.bannerRight}>
-                <div style={s.bannerStat}>
-                  <span style={s.bannerStatVal}>{shopInfo.deliveryMins} min</span>
-                  <span style={s.bannerStatLbl}>Delivery</span>
-                </div>
-                <div style={s.bannerDivider}/>
-                <div style={s.bannerStat}>
-                  <span style={s.bannerStatVal}>{shopInfo.distanceKm} km</span>
-                  <span style={s.bannerStatLbl}>Away</span>
-                </div>
-                <div style={s.bannerDivider}/>
-                <div style={s.bannerStat}>
-                  <span style={s.bannerStatVal}>₹{shopInfo.deliveryFee}</span>
-                  <span style={s.bannerStatLbl}>Fee</span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Search */}
+        {/* Search */}
+        <div style={s.searchWrap}>
           <div style={s.searchBox}>
             <span style={s.searchIcon}>🔍</span>
             <input
               style={s.searchInput}
-              placeholder='Try "fever", "italian dinner", "movie night"...'
+              placeholder='Search "biscuits", "milk", "fever", "movie night"...'
               value={query}
               onChange={e => setQuery(e.target.value)}
+              autoFocus
             />
-            {query && (
-              <button style={s.clearBtn} onClick={() => { setQuery(""); setSuggestions([]); }}>✕</button>
-            )}
-          </div>
-
-          {/* Recipe Agent button */}
-          <button style={s.recipeBtn} onClick={() => setShowRecipe(true)}>
-            🤖 Recipe Agent — type a dish, get all ingredients instantly
-          </button>
-
-          {/* Suggestions */}
-          <div style={s.resultsBox}>
-            {searching && (
-              <div style={s.centreMsg}>🤖 AI is thinking...</div>
-            )}
-            {!searching && suggestions.length === 0 && !query && (
-              <div style={s.centreMsg}>
-                <div style={{ fontSize: 40, marginBottom: 12 }}>🛒</div>
-                <div style={{ color: "#555", fontSize: 15 }}>
-                  Search for anything — symptoms, meals, occasions
-                </div>
-              </div>
-            )}
-            {!searching && suggestions.length === 0 && query && (
-              <div style={s.centreMsg}>
-                <div style={{ fontSize: 36, marginBottom: 8 }}>🤔</div>
-                <div style={{ color: "#555" }}>No suggestions for that. Try something else!</div>
-              </div>
-            )}
-            {!searching && suggestions.length > 0 && (
-              <div style={s.grid}>
-                {suggestions.map((item, i) => (
-                  <div key={i} style={s.card}>
-                    <div style={s.cardEmoji}>{item.emoji}</div>
-                    <div style={s.cardName}>{item.name}</div>
-                    <div style={s.cardReason}>{item.reason}</div>
-                    <div style={s.cardBottom}>
-                      <span style={s.cardPrice}>₹{item.price}</span>
-                      <button style={s.addBtn} onClick={() => addToCart(item)}>+ Add</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            {query && <button style={s.clearBtn} onClick={() => { setQuery(""); setSuggestions([]); }}>✕</button>}
           </div>
         </div>
 
-        {/* ── CART ── */}
-        <div style={s.cartPanel}>
-          <div style={s.cartHeader}>
-            🛒 Your Cart {cartCount > 0 && <span style={s.cartBadge}>{cartCount}</span>}
+        {/* Recipe Agent button */}
+        <button style={s.recipeBtn} onClick={() => setShowRecipe(true)}>
+          🤖 Recipe Agent — type a dish, get all ingredients added to cart instantly
+        </button>
+
+        {/* Loading */}
+        {loading && (
+          <div style={s.loadingRow}>
+            <div style={s.spinner}/> AI is finding products...
           </div>
+        )}
 
-          {cart.length === 0 ? (
-            <div style={s.emptyCart}>Add items from search to get started</div>
-          ) : (
-            <>
-              <div style={s.cartItems}>
-                {cart.map(item => (
-                  <div key={item.name} style={s.cartItem}>
-                    <div style={s.cartItemLeft}>
-                      <span style={{ fontSize: 22 }}>{item.emoji}</span>
-                      <div>
-                        <div style={s.cartItemName}>{item.name}</div>
-                        <div style={s.cartItemPrice}>₹{item.price} × {item.qty}</div>
-                      </div>
-                    </div>
-                    <div style={s.qtyRow}>
-                      <button style={s.qtyBtn} onClick={() => changeQty(item.name, -1)}>−</button>
-                      <span style={s.qtyNum}>{item.qty}</span>
-                      <button style={s.qtyBtn} onClick={() => changeQty(item.name, +1)}>+</button>
-                    </div>
+        {/* No results */}
+        {!loading && query && suggestions.length === 0 && (
+          <div style={s.noResults}>
+            <div style={{fontSize:48,marginBottom:12}}>🔍</div>
+            <div style={s.noResultsTitle}>No grocery items found for "{query}"</div>
+            <div style={s.noResultsSub}>Try something like "milk", "chips", or "dal rice"</div>
+          </div>
+        )}
+
+        {/* Empty state */}
+        {!query && (
+          <div style={s.emptyState}>
+            <div style={s.emptyEmoji}>🛒</div>
+            <div style={s.emptyTitle}>What are you looking for?</div>
+            <div style={s.emptySub}>Search any product, brand, category, or occasion</div>
+            <div style={s.quickSearches}>
+              {["🍪 Biscuits","🥛 Milk","🍜 Noodles","🍫 Chocolate","🫖 Tea","🧴 Handwash"].map(q => (
+                <button key={q} style={s.quickBtn} onClick={() => setQuery(q.split(" ").slice(1).join(" "))}>
+                  {q}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Product grid */}
+        {suggestions.length > 0 && (
+          <div style={s.resultsWrap}>
+            <div style={s.resultsHeader}>
+              <span style={s.resultsTitle}>
+                🤖 AI found <strong>{suggestions.length} products</strong> for "{query}"
+              </span>
+              <span style={s.aiBadge}>Powered by Groq AI</span>
+            </div>
+            <div style={s.grid}>
+              {suggestions.map((item, i) => (
+                <div key={i} style={s.card} onClick={() => setSelectedProduct(item)}>
+                  <div style={s.cardEmoji}>{item.emoji || "🛍️"}</div>
+                  <div style={s.cardName}>{item.name}</div>
+                  {item.brand && <div style={s.cardBrand}>{item.brand}</div>}
+                  <div style={s.cardReason}>{item.reason}</div>
+                  <div style={s.cardBottom}>
+                    <span style={s.cardPrice}>₹{item.price}</span>
+                    {(() => {
+                      const cartItem = cart.find(c => c.name === item.name);
+                      return cartItem ? (
+                        <div style={s.qtyRow} onClick={e => e.stopPropagation()}>
+                          <button style={s.qtyBtn} onClick={e => { e.stopPropagation(); setCart(prev => prev.map(c => c.name === item.name ? {...c, qty: c.qty - 1} : c).filter(c => c.qty > 0)); }}>−</button>
+                          <span style={s.qtyNum}>{cartItem.qty}</span>
+                          <button style={s.qtyBtn} onClick={e => { e.stopPropagation(); addToCart(item); }}>+</button>
+                        </div>
+                      ) : (
+                        <button style={s.addBtn} onClick={e => { e.stopPropagation(); addToCart(item); }}>+ Add</button>
+                      );
+                    })()}
                   </div>
-                ))}
-              </div>
-
-              <div style={s.cartSummary}>
-                <div style={s.summaryRow}>
-                  <span style={s.summaryLbl}>Subtotal</span>
-                  <span style={s.summaryVal}>₹{cartTotal}</span>
                 </div>
-                {shopInfo && (
-                  <div style={s.summaryRow}>
-                    <span style={s.summaryLbl}>Delivery fee</span>
-                    <span style={s.summaryVal}>₹{deliveryFee}</span>
-                  </div>
-                )}
-                <div style={{ ...s.summaryRow, ...s.summaryTotal }}>
-                  <span>Total</span>
-                  <span style={s.totalAmt}>₹{grandTotal}</span>
-                </div>
-              </div>
-
-              {shopInfo && (
-                <div style={s.deliveryNote}>
-                  📍 Delivering from <strong>{shopInfo.city}</strong> in ~{shopInfo.deliveryMins} mins
-                </div>
-              )}
-
-              <button style={s.checkoutBtn} onClick={() => setShowCheckout(true)}>
-                Proceed to Checkout →
-              </button>
-            </>
-          )}
-        </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Modals */}
+      {selectedProduct && (
+        <ProductModal
+          product={selectedProduct}
+          onClose={() => setSelectedProduct(null)}
+          onAddToCart={item => {
+            setCart(prev => {
+              const exists = prev.find(c => c.name === item.name);
+              if (exists) return prev.map(c => c.name === item.name ? { ...c, qty: c.qty + 1 } : c);
+              return [...prev, { ...item, qty: 1 }];
+            });
+          }}
+        />
+      )}
       {showRecipe && (
         <RecipeAgent
           onAddToCart={addToCartFromRecipe}
@@ -299,7 +258,7 @@ export default function BuyerDashboard({ user, onLogout }) {
           cart={cart}
           shopInfo={shopInfo}
           onClose={() => setShowCheckout(false)}
-          onSuccess={() => { setCart([]); }}
+          onSuccess={() => setCart([])}
         />
       )}
     </div>
@@ -307,91 +266,51 @@ export default function BuyerDashboard({ user, onLogout }) {
 }
 
 const s = {
-  page:           { minHeight: "100vh", background: "#f5f5f5", fontFamily: "'Segoe UI', sans-serif" },
-  header:         { background: "#fff", borderBottom: "1px solid #eee", padding: "0 24px", height: 60, display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 8px #0001" },
-  headerLeft:     { display: "flex", alignItems: "center", gap: 14 },
-  logo:           { fontWeight: 800, fontSize: 18, color: "#1a1a1a" },
-  locPill:        { padding: "5px 12px", borderRadius: 20, background: "#f5f5f5", fontSize: 13, color: "#666", cursor: "pointer", border: "1px solid #eee" },
-  locFound:       { background: "#fff8ee", border: "1px solid #f6a62333", color: "#333" },
-  locDenied:      { background: "#fff0f0", border: "1px solid #f8717133", color: "#888" },
-  headerRight:    { display: "flex", alignItems: "center", gap: 12 },
-  userName:       { fontSize: 14, color: "#555" },
-  logoutBtn:      { padding: "6px 14px", borderRadius: 8, border: "1px solid #ddd", background: "#fff", cursor: "pointer", fontSize: 13, color: "#555" },
-  shopDropdown:   { background: "#fff", border: "1px solid #eee", borderRadius: 12, margin: "8px 24px", padding: 16, boxShadow: "0 4px 20px #0001" },
-  shopDropTitle:  { fontSize: 13, fontWeight: 700, color: "#333", marginBottom: 10, marginTop: 0 },
-  shopRow:        { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 12px", borderRadius: 8, marginBottom: 6, background: "#fafafa", border: "1px solid #f0f0f0" },
-  shopRowBest:    { background: "#fff8ee", border: "1px solid #f6a62333" },
-  shopName:       { fontSize: 13, fontWeight: 600, color: "#1a1a1a", marginBottom: 2 },
-  shopAddr:       { fontSize: 12, color: "#888" },
-  shopMeta:       { textAlign: "right" },
-  shopDist:       { display: "block", fontSize: 14, fontWeight: 700, color: "#f6a623" },
-  shopTime:       { display: "block", fontSize: 12, color: "#888", marginTop: 2 },
-  closeShops:     { marginTop: 8, width: "100%", padding: "8px 0", borderRadius: 8, border: "1px solid #eee", background: "#fafafa", cursor: "pointer", fontSize: 13, color: "#888" },
-  body:           { display: "flex", gap: 24, padding: 24, maxWidth: 1200, margin: "0 auto" },
-  main:           { flex: 1 },
-  greeting:       { margin: "0 0 4px", fontSize: 24, fontWeight: 700, color: "#1a1a1a" },
-  sub:            { margin: "0 0 16px", color: "#888", fontSize: 15 },
-  shopBanner:     { background: "#fff", border: "1px solid #f6a62333", borderRadius: 14, padding: "14px 18px", marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center", boxShadow: "0 2px 8px #f6a62311" },
-  bannerLeft:     { display: "flex", alignItems: "center", gap: 12 },
-  bannerIcon:     { fontSize: 28 },
-  bannerName:     { fontSize: 14, fontWeight: 700, color: "#1a1a1a" },
-  bannerAddr:     { fontSize: 12, color: "#888", marginTop: 2 },
-  bannerRight:    { display: "flex", alignItems: "center", gap: 16 },
-  bannerStat:     { textAlign: "center" },
-  bannerStatVal:  { display: "block", fontSize: 16, fontWeight: 800, color: "#f6a623" },
-  bannerStatLbl:  { display: "block", fontSize: 11, color: "#aaa", marginTop: 2 },
-  bannerDivider:  { width: 1, height: 30, background: "#eee" },
-  searchBox:      { background: "#fff", borderRadius: 12, border: "1px solid #eee", display: "flex", alignItems: "center", padding: "0 14px", marginBottom: 16, boxShadow: "0 2px 8px #0001" },
-  searchIcon:     { fontSize: 18, marginRight: 10, color: "#aaa" },
-  searchInput:    { flex: 1, border: "none", outline: "none", fontSize: 15, padding: "14px 0", background: "transparent", color: "#1a1a1a" },
-  clearBtn:       { background: "none", border: "none", cursor: "pointer", color: "#aaa", fontSize: 16, padding: 4 },
-  resultsBox:     { background: "#fff", borderRadius: 14, border: "1px solid #eee", minHeight: 300, padding: 16 },
-  centreMsg:      { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 250, color: "#888", fontSize: 15 },
-  grid:           { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 14 },
-  card:           { background: "#fafafa", border: "1px solid #eee", borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 6 },
-  cardEmoji:      { fontSize: 32 },
-  cardName:       { fontSize: 14, fontWeight: 600, color: "#1a1a1a" },
-  cardReason:     { fontSize: 12, color: "#888", flexGrow: 1 },
-  cardBottom:     { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 },
-  cardPrice:      { fontSize: 15, fontWeight: 700, color: "#f6a623" },
-  addBtn:         { padding: "5px 12px", borderRadius: 8, border: "none", background: "#f6a623", color: "#000", fontSize: 13, fontWeight: 700, cursor: "pointer" },
-  cartPanel:      { width: 300, background: "#fff", borderRadius: 14, border: "1px solid #eee", padding: 16, height: "fit-content", position: "sticky", top: 76, boxShadow: "0 2px 12px #0001" },
-  cartHeader:     { fontSize: 16, fontWeight: 700, color: "#1a1a1a", marginBottom: 14, display: "flex", alignItems: "center", gap: 8 },
-  cartBadge:      { background: "#f6a623", color: "#000", borderRadius: "50%", width: 22, height: 22, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700 },
-  emptyCart:      { color: "#aaa", fontSize: 14, textAlign: "center", padding: "30px 0" },
-  cartItems:      { display: "flex", flexDirection: "column", gap: 12, marginBottom: 16 },
-  cartItem:       { display: "flex", justifyContent: "space-between", alignItems: "center" },
-  cartItemLeft:   { display: "flex", alignItems: "center", gap: 10 },
-  cartItemName:   { fontSize: 13, fontWeight: 600, color: "#1a1a1a" },
-  cartItemPrice:  { fontSize: 12, color: "#888" },
-  qtyRow:         { display: "flex", alignItems: "center", gap: 8 },
-  qtyBtn:         { width: 26, height: 26, borderRadius: 6, border: "1px solid #ddd", background: "#fff", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" },
-  qtyNum:         { fontSize: 14, fontWeight: 600, minWidth: 16, textAlign: "center" },
-  cartSummary:    { borderTop: "1px solid #eee", paddingTop: 12, marginBottom: 12 },
-  summaryRow:     { display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 13, color: "#666" },
-  summaryLbl:     {},
-  summaryVal:     {},
-  summaryTotal:   { fontSize: 15, fontWeight: 700, color: "#1a1a1a", marginTop: 4 },
-  totalAmt:       { color: "#f6a623", fontSize: 17 },
-  deliveryNote:   { background: "#fff8ee", border: "1px solid #f6a62322", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#888", marginBottom: 12, textAlign: "center" },
-  recipeBtn:     { width:"100%",padding:"12px 16px",borderRadius:12,border:"2px dashed #f6a62366",background:"linear-gradient(135deg,#fff8ee,#fffdf7)",color:"#f6a623",fontSize:14,fontWeight:700,cursor:"pointer",marginBottom:14,textAlign:"center" },
-  checkoutBtn:    { width: "100%", padding: 14, borderRadius: 12, border: "none", background: "linear-gradient(135deg,#f6a623,#f97316)", color: "#000", fontSize: 15, fontWeight: 700, cursor: "pointer" },
+  page:           { minHeight:"100vh", background:"#f5f5f5", fontFamily:"'Segoe UI',sans-serif" },
+  header:         { background:"#1a1a1a", padding:"0 24px", height:56, display:"flex", alignItems:"center", gap:16, position:"relative", zIndex:100 },
+  logo:           { fontWeight:800, fontSize:18, color:"#fff", marginRight:8 },
+  locPill:        { padding:"5px 14px", borderRadius:20, background:"#ffffff11", border:"1px solid #ffffff22", color:"#fff", fontSize:13, cursor:"pointer", whiteSpace:"nowrap" },
+  shopDropdown:   { position:"absolute", top:60, left:160, background:"#fff", borderRadius:12, boxShadow:"0 8px 30px #0003", minWidth:300, zIndex:200, overflow:"hidden" },
+  shopOption:     { padding:"12px 16px", cursor:"pointer", fontSize:13, display:"flex", justifyContent:"space-between", borderBottom:"1px solid #f5f5f5" },
+  shopOptionFirst:{ background:"#fff8ee" },
+  shopMeta:       { color:"#aaa", fontSize:12 },
+  headerRight:    { display:"flex", alignItems:"center", gap:12, marginLeft:"auto" },
+  userName:       { fontSize:13, color:"#aaa", whiteSpace:"nowrap" },
+  cartBtn:        { position:"relative", padding:"7px 16px", borderRadius:10, border:"none", background:"linear-gradient(135deg,#f6a623,#f97316)", color:"#000", fontSize:14, fontWeight:700, cursor:"pointer" },
+  cartBadge:      { position:"absolute", top:-6, right:-6, background:"#dc2626", color:"#fff", borderRadius:"50%", width:18, height:18, fontSize:11, fontWeight:800, display:"flex", alignItems:"center", justifyContent:"center" },
+  logoutBtn:      { padding:"6px 14px", borderRadius:8, border:"1px solid #444", background:"transparent", cursor:"pointer", fontSize:13, color:"#ccc" },
+  body:           { maxWidth:1000, margin:"0 auto", padding:24 },
+  searchWrap:     { marginBottom:14 },
+  searchBox:      { display:"flex", alignItems:"center", background:"#fff", borderRadius:14, padding:"4px 16px", boxShadow:"0 2px 12px #0001", border:"2px solid #f6a62333" },
+  searchIcon:     { fontSize:20, marginRight:10 },
+  searchInput:    { flex:1, border:"none", outline:"none", fontSize:16, padding:"10px 0", background:"transparent" },
+  clearBtn:       { background:"none", border:"none", fontSize:18, cursor:"pointer", color:"#aaa", padding:4 },
+  recipeBtn:      { width:"100%", padding:"12px 16px", borderRadius:12, border:"2px dashed #f6a62366", background:"linear-gradient(135deg,#fff8ee,#fffdf7)", color:"#f6a623", fontSize:14, fontWeight:700, cursor:"pointer", marginBottom:20, textAlign:"center" },
+  loadingRow:     { display:"flex", alignItems:"center", gap:10, color:"#888", fontSize:14, padding:"20px 0" },
+  spinner:        { width:20, height:20, border:"3px solid #eee", borderTopColor:"#f6a623", borderRadius:"50%", animation:"spin 0.8s linear infinite" },
+  noResults:      { textAlign:"center", padding:"60px 20px" },
+  noResultsTitle: { fontSize:18, fontWeight:700, color:"#1a1a1a", marginBottom:8 },
+  noResultsSub:   { fontSize:14, color:"#aaa" },
+  emptyState:     { textAlign:"center", padding:"60px 20px" },
+  emptyEmoji:     { fontSize:64, marginBottom:16 },
+  emptyTitle:     { fontSize:22, fontWeight:800, color:"#1a1a1a", marginBottom:8 },
+  emptySub:       { fontSize:14, color:"#aaa", marginBottom:24 },
+  quickSearches:  { display:"flex", flexWrap:"wrap", gap:10, justifyContent:"center" },
+  quickBtn:       { padding:"10px 20px", borderRadius:20, border:"1px solid #eee", background:"#fff", cursor:"pointer", fontSize:14, fontWeight:600, color:"#555" },
+  resultsWrap:    { },
+  resultsHeader:  { display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 },
+  resultsTitle:   { fontSize:15, color:"#555" },
+  aiBadge:        { background:"linear-gradient(135deg,#f6a623,#f97316)", color:"#000", fontSize:11, fontWeight:700, padding:"3px 12px", borderRadius:20 },
+  grid:           { display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:14 },
+  card:           { background:"#fff", borderRadius:14, padding:16, cursor:"pointer", boxShadow:"0 2px 8px #0001", border:"1px solid #eee", transition:"box-shadow 0.2s" },
+  cardEmoji:      { fontSize:40, marginBottom:10 },
+  cardName:       { fontSize:14, fontWeight:700, color:"#1a1a1a", marginBottom:3 },
+  cardBrand:      { fontSize:11, color:"#f6a623", fontWeight:600, marginBottom:4 },
+  cardReason:     { fontSize:12, color:"#aaa", marginBottom:10, fontStyle:"italic" },
+  cardBottom:     { display:"flex", justifyContent:"space-between", alignItems:"center" },
+  cardPrice:      { fontSize:16, fontWeight:800, color:"#1a1a1a" },
+  qtyRow:         { display:"flex", alignItems:"center", gap:6 },
+  qtyBtn:         { width:28, height:28, borderRadius:8, border:"1px solid #f6a623", background:"#fff8ee", color:"#f6a623", fontSize:16, fontWeight:800, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" },
+  qtyNum:         { fontSize:15, fontWeight:800, color:"#1a1a1a", minWidth:22, textAlign:"center" },
+  addBtn:         { padding:"7px 14px", borderRadius:8, border:"none", background:"linear-gradient(135deg,#f6a623,#f97316)", color:"#000", fontSize:13, fontWeight:700, cursor:"pointer" },
 };
-
-// ── PATCH: add this to the top of BuyerDashboard.jsx ──
-// 1. Add this import at the top:
-//
-// 2. Add this state inside the component:
-//
-// 3. Replace the <button style={s.checkoutBtn}> line with:
-//    <button style={s.checkoutBtn} onClick={() => cart.length > 0 && setShowCheckout(true)}>
-//      Proceed to Checkout →
-//    </button>
-//    {showCheckout && (
-//      <CheckoutModal
-//        cart={cart}
-//        shopInfo={shopInfo}
-//        onClose={() => setShowCheckout(false)}
-//        onSuccess={() => { setCart([]); }}
-//      />
-//    )}
