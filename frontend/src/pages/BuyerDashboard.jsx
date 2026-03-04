@@ -1,180 +1,270 @@
-// ============================================================
-//  pages/BuyerDashboard.jsx  —  Buyer View
-//
-//  Interview explanation:
-//    - Calls getSuggestions() from api.js when user types
-//    - Uses debounce pattern (useEffect + delay) to avoid
-//      hitting backend on every single keystroke
-//    - Cart state lives here locally (in production: store in backend)
-// ============================================================
-
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { getSuggestions } from "../api/api.js";
 
-export default function BuyerDashboard({ user, onLogout }) {
-  const [search,      setSearch]      = useState("");
-  const [suggestions, setSuggestions] = useState([]);
-  const [loading,     setLoading]     = useState(false);
-  const [cartItems,   setCartItems]   = useState([
-    { id: 1, name: "Amul Milk 500ml", price: 28, qty: 2, emoji: "🥛" },
-    { id: 2, name: "Brown Bread",     price: 45, qty: 1, emoji: "🍞" },
-  ]);
+// Fetch nearest shops from backend
+async function fetchNearestShops(lat, lng) {
+  const res = await fetch(`http://localhost:5000/api/shops/nearest?lat=${lat}&lng=${lng}`);
+  return res.json();
+}
 
-  // useEffect watches `search` — whenever it changes, we wait 500ms
-  // before calling the API (this is called "debouncing")
+export default function BuyerDashboard({ user, onLogout }) {
+  const [query,       setQuery]       = useState("");
+  const [suggestions, setSuggestions] = useState([]);
+  const [cart,        setCart]        = useState([]);
+  const [searching,   setSearching]   = useState(false);
+  const [shopInfo,    setShopInfo]    = useState(null);   // nearest shop
+  const [allShops,    setAllShops]    = useState([]);
+  const [locStatus,   setLocStatus]   = useState("detecting"); // detecting | found | denied
+  const [showShops,   setShowShops]   = useState(false);
+  const debounceRef = useRef(null);
+
+  // On mount — ask for location and find nearest shop
   useEffect(() => {
-    if (!search.trim()) {
-      setSuggestions([]);
+    if (!navigator.geolocation) {
+      setLocStatus("denied");
       return;
     }
-    const timer = setTimeout(async () => {
-      setLoading(true);
-      try {
-        const data = await getSuggestions(search);
-        if (data.success && data.matched) {
-          setSuggestions(data.suggestions);
-        } else {
-          setSuggestions([]);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const { latitude: lat, longitude: lng } = pos.coords;
+        try {
+          const data = await fetchNearestShops(lat, lng);
+          if (data.success) {
+            setShopInfo(data.nearest);
+            setAllShops(data.allShops);
+            setLocStatus("found");
+          }
+        } catch {
+          setLocStatus("denied");
         }
-      } catch {
-        setSuggestions([]);
-      } finally {
-        setLoading(false);
-      }
-    }, 500);                          // 500ms debounce delay
+      },
+      () => setLocStatus("denied"),
+      { timeout: 8000 }
+    );
+  }, []);
 
-    return () => clearTimeout(timer); // cleanup if user keeps typing
-  }, [search]);
+  // Debounced AI search
+  useEffect(() => {
+    if (!query.trim()) { setSuggestions([]); return; }
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const data = await getSuggestions(query);
+        setSuggestions(data.matched ? data.suggestions : []);
+      } catch { setSuggestions([]); }
+      finally { setSearching(false); }
+    }, 500);
+  }, [query]);
 
   function addToCart(item) {
-    setCartItems((prev) => {
-      const exists = prev.find((c) => c.name === item.name);
-      if (exists)
-        return prev.map((c) => c.name === item.name ? { ...c, qty: c.qty + 1 } : c);
-      return [...prev, { ...item, id: Date.now(), qty: 1 }];
+    setCart(prev => {
+      const exists = prev.find(c => c.name === item.name);
+      if (exists) return prev.map(c => c.name === item.name ? { ...c, qty: c.qty + 1 } : c);
+      return [...prev, { ...item, qty: 1 }];
     });
   }
 
-  function changeQty(id, delta) {
-    setCartItems((prev) =>
-      prev
-        .map((c) => c.id === id ? { ...c, qty: c.qty + delta } : c)
-        .filter((c) => c.qty > 0)
+  function changeQty(name, delta) {
+    setCart(prev =>
+      prev.map(c => c.name === name ? { ...c, qty: c.qty + delta } : c)
+          .filter(c => c.qty > 0)
     );
   }
 
-  const total = cartItems.reduce((s, i) => s + i.price * i.qty, 0);
+  const cartTotal    = cart.reduce((s, c) => s + c.price * c.qty, 0);
+  const cartCount    = cart.reduce((s, c) => s + c.qty, 0);
+  const deliveryFee  = shopInfo ? shopInfo.deliveryFee : 0;
+  const grandTotal   = cartTotal + deliveryFee;
 
   return (
     <div style={s.page}>
-      {/* ── Header ── */}
-      <header style={s.header}>
-        <div style={s.hLeft}>
+      {/* ── HEADER ── */}
+      <div style={s.header}>
+        <div style={s.headerLeft}>
           <span style={s.logo}>⚡ SmarterBlinkit</span>
-          <span style={s.badge}>📍 Delivering in <b>10 mins</b></span>
+          {/* Location pill */}
+          {locStatus === "detecting" && (
+            <div style={s.locPill}>📍 Detecting location...</div>
+          )}
+          {locStatus === "found" && shopInfo && (
+            <div style={{ ...s.locPill, ...s.locFound }} onClick={() => setShowShops(!showShops)}
+              title="Click to see all nearby shops">
+              📍 Delivering in <strong style={{ color: "#f6a623" }}>&nbsp;{shopInfo.deliveryMins} mins</strong>
+              &nbsp;· {shopInfo.city} &nbsp;▾
+            </div>
+          )}
+          {locStatus === "denied" && (
+            <div style={{ ...s.locPill, ...s.locDenied }}>📍 Location unavailable</div>
+          )}
         </div>
-        <div style={s.hRight}>
-          <span style={s.uname}>👤 {user.name}</span>
-          <button style={s.logout} onClick={onLogout}>Logout</button>
+        <div style={s.headerRight}>
+          <span style={s.userName}>👤 {user.name}</span>
+          <button style={s.logoutBtn} onClick={onLogout}>Logout</button>
         </div>
-      </header>
+      </div>
+
+      {/* ── SHOP DROPDOWN ── */}
+      {showShops && allShops.length > 0 && (
+        <div style={s.shopDropdown}>
+          <p style={s.shopDropTitle}>🏪 Shops ranked by distance from you</p>
+          {allShops.slice(0, 5).map((shop, i) => (
+            <div key={shop.id} style={{ ...s.shopRow, ...(i === 0 ? s.shopRowBest : {}) }}>
+              <div>
+                <div style={s.shopName}>{i === 0 ? "⭐ " : ""}{shop.name}</div>
+                <div style={s.shopAddr}>{shop.address}</div>
+              </div>
+              <div style={s.shopMeta}>
+                <span style={s.shopDist}>{shop.distanceKm} km</span>
+                <span style={s.shopTime}>{shop.deliveryMins} min · ₹{shop.deliveryFee}</span>
+              </div>
+            </div>
+          ))}
+          <button style={s.closeShops} onClick={() => setShowShops(false)}>Close ✕</button>
+        </div>
+      )}
 
       <div style={s.body}>
-        {/* ── Main Area ── */}
+        {/* ── MAIN CONTENT ── */}
         <div style={s.main}>
           <h2 style={s.greeting}>Hello {user.name.split(" ")[0]}! 👋</h2>
           <p style={s.sub}>What do you need today?</p>
 
-          {/* Search Bar */}
-          <div style={s.searchBar}>
-            <span style={{ fontSize: 20 }}>🔍</span>
+          {/* Nearest shop banner */}
+          {locStatus === "found" && shopInfo && (
+            <div style={s.shopBanner}>
+              <div style={s.bannerLeft}>
+                <span style={s.bannerIcon}>🏪</span>
+                <div>
+                  <div style={s.bannerName}>{shopInfo.name}</div>
+                  <div style={s.bannerAddr}>{shopInfo.address}</div>
+                </div>
+              </div>
+              <div style={s.bannerRight}>
+                <div style={s.bannerStat}>
+                  <span style={s.bannerStatVal}>{shopInfo.deliveryMins} min</span>
+                  <span style={s.bannerStatLbl}>Delivery</span>
+                </div>
+                <div style={s.bannerDivider}/>
+                <div style={s.bannerStat}>
+                  <span style={s.bannerStatVal}>{shopInfo.distanceKm} km</span>
+                  <span style={s.bannerStatLbl}>Away</span>
+                </div>
+                <div style={s.bannerDivider}/>
+                <div style={s.bannerStat}>
+                  <span style={s.bannerStatVal}>₹{shopInfo.deliveryFee}</span>
+                  <span style={s.bannerStatLbl}>Fee</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Search */}
+          <div style={s.searchBox}>
+            <span style={s.searchIcon}>🔍</span>
             <input
               style={s.searchInput}
-              placeholder='Try "I have cold" or "fever" or "party"...'
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              placeholder='Try "fever", "italian dinner", "movie night"...'
+              value={query}
+              onChange={e => setQuery(e.target.value)}
             />
-            {search && (
-              <button style={s.clear} onClick={() => setSearch("")}>✕</button>
+            {query && (
+              <button style={s.clearBtn} onClick={() => { setQuery(""); setSuggestions([]); }}>✕</button>
             )}
           </div>
 
-          {/* AI Suggestions */}
-          {loading && <div style={s.loadingMsg}>🤖 Thinking...</div>}
-
-          {!loading && suggestions.length > 0 && (
-            <div style={s.aiBox}>
-              <div style={s.aiHeader}>
-                <span style={s.aiTag}>🤖 AI Smart Cart</span>
-                <span style={s.aiDesc}>Based on "{search}", you might need:</span>
+          {/* Suggestions */}
+          <div style={s.resultsBox}>
+            {searching && (
+              <div style={s.centreMsg}>🤖 AI is thinking...</div>
+            )}
+            {!searching && suggestions.length === 0 && !query && (
+              <div style={s.centreMsg}>
+                <div style={{ fontSize: 40, marginBottom: 12 }}>🛒</div>
+                <div style={{ color: "#555", fontSize: 15 }}>
+                  Search for anything — symptoms, meals, occasions
+                </div>
               </div>
+            )}
+            {!searching && suggestions.length === 0 && query && (
+              <div style={s.centreMsg}>
+                <div style={{ fontSize: 36, marginBottom: 8 }}>🤔</div>
+                <div style={{ color: "#555" }}>No suggestions for that. Try something else!</div>
+              </div>
+            )}
+            {!searching && suggestions.length > 0 && (
               <div style={s.grid}>
                 {suggestions.map((item, i) => (
-                  <div key={i} style={s.sugCard}>
-                    <span style={s.emoji}>{item.emoji}</span>
-                    <div style={s.info}>
-                      <div style={s.iName}>{item.name}</div>
-                      <div style={s.iReason}>{item.reason}</div>
-                      <div style={s.iPrice}>₹{item.price}</div>
+                  <div key={i} style={s.card}>
+                    <div style={s.cardEmoji}>{item.emoji}</div>
+                    <div style={s.cardName}>{item.name}</div>
+                    <div style={s.cardReason}>{item.reason}</div>
+                    <div style={s.cardBottom}>
+                      <span style={s.cardPrice}>₹{item.price}</span>
+                      <button style={s.addBtn} onClick={() => addToCart(item)}>+ Add</button>
                     </div>
-                    <button style={s.addBtn} onClick={() => addToCart(item)}>
-                      + Add
-                    </button>
                   </div>
                 ))}
               </div>
-            </div>
-          )}
-
-          {!loading && !search && (
-            <div style={s.empty}>
-              <div style={{ fontSize: 48 }}>🛍️</div>
-              <p style={{ color: "#888" }}>Search a symptom or occasion to get AI suggestions!</p>
-            </div>
-          )}
-
-          {!loading && search && suggestions.length === 0 && (
-            <div style={s.empty}>
-              <div style={{ fontSize: 48 }}>🤔</div>
-              <p style={{ color: "#888" }}>
-                Try "cold", "fever", "party", "headache" or "breakfast"!
-              </p>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
-        {/* ── Cart Sidebar ── */}
-        <div style={s.cart}>
-          <h3 style={s.cartTitle}>🛒 Your Cart</h3>
+        {/* ── CART ── */}
+        <div style={s.cartPanel}>
+          <div style={s.cartHeader}>
+            🛒 Your Cart {cartCount > 0 && <span style={s.cartBadge}>{cartCount}</span>}
+          </div>
 
-          {cartItems.length === 0 && (
-            <p style={{ color: "#aaa", textAlign: "center", padding: 20 }}>
-              Cart is empty
-            </p>
-          )}
-
-          {cartItems.map((item) => (
-            <div key={item.id} style={s.cartItem}>
-              <span style={{ fontSize: 22 }}>{item.emoji}</span>
-              <div style={{ flex: 1 }}>
-                <div style={s.ciName}>{item.name}</div>
-                <div style={s.ciPrice}>₹{item.price} × {item.qty}</div>
-              </div>
-              <div style={s.qty}>
-                <button style={s.qBtn} onClick={() => changeQty(item.id, -1)}>−</button>
-                <span style={s.qNum}>{item.qty}</span>
-                <button style={s.qBtn} onClick={() => changeQty(item.id, +1)}>+</button>
-              </div>
-            </div>
-          ))}
-
-          {cartItems.length > 0 && (
+          {cart.length === 0 ? (
+            <div style={s.emptyCart}>Add items from search to get started</div>
+          ) : (
             <>
-              <div style={s.total}>
-                <span>Total</span>
-                <span style={{ color: "#f6a623", fontWeight: 700 }}>₹{total}</span>
+              <div style={s.cartItems}>
+                {cart.map(item => (
+                  <div key={item.name} style={s.cartItem}>
+                    <div style={s.cartItemLeft}>
+                      <span style={{ fontSize: 22 }}>{item.emoji}</span>
+                      <div>
+                        <div style={s.cartItemName}>{item.name}</div>
+                        <div style={s.cartItemPrice}>₹{item.price} × {item.qty}</div>
+                      </div>
+                    </div>
+                    <div style={s.qtyRow}>
+                      <button style={s.qtyBtn} onClick={() => changeQty(item.name, -1)}>−</button>
+                      <span style={s.qtyNum}>{item.qty}</span>
+                      <button style={s.qtyBtn} onClick={() => changeQty(item.name, +1)}>+</button>
+                    </div>
+                  </div>
+                ))}
               </div>
-              <button style={s.checkout}>Proceed to Checkout →</button>
+
+              <div style={s.cartSummary}>
+                <div style={s.summaryRow}>
+                  <span style={s.summaryLbl}>Subtotal</span>
+                  <span style={s.summaryVal}>₹{cartTotal}</span>
+                </div>
+                {shopInfo && (
+                  <div style={s.summaryRow}>
+                    <span style={s.summaryLbl}>Delivery fee</span>
+                    <span style={s.summaryVal}>₹{deliveryFee}</span>
+                  </div>
+                )}
+                <div style={{ ...s.summaryRow, ...s.summaryTotal }}>
+                  <span>Total</span>
+                  <span style={s.totalAmt}>₹{grandTotal}</span>
+                </div>
+              </div>
+
+              {shopInfo && (
+                <div style={s.deliveryNote}>
+                  📍 Delivering from <strong>{shopInfo.city}</strong> in ~{shopInfo.deliveryMins} mins
+                </div>
+              )}
+
+              <button style={s.checkoutBtn}>
+                Proceed to Checkout →
+              </button>
             </>
           )}
         </div>
@@ -184,43 +274,72 @@ export default function BuyerDashboard({ user, onLogout }) {
 }
 
 const s = {
-  page:       { minHeight: "100vh", background: "#f8f9fb", fontFamily: "'Segoe UI', sans-serif" },
-  header:     { background: "#fff", borderBottom: "1px solid #eee", padding: "14px 28px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 10, boxShadow: "0 2px 12px #0001" },
-  hLeft:      { display: "flex", alignItems: "center", gap: 16 },
-  logo:       { fontSize: 20, fontWeight: 800, color: "#1a1a1a" },
-  badge:      { background: "#fff8e6", color: "#c07800", fontSize: 13, padding: "4px 12px", borderRadius: 20, border: "1px solid #f6e0a0" },
-  hRight:     { display: "flex", alignItems: "center", gap: 14 },
-  uname:      { color: "#555", fontSize: 14, fontWeight: 600 },
-  logout:     { background: "#f1f1f1", border: "none", color: "#555", padding: "6px 14px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
-  body:       { display: "flex", gap: 24, padding: 28, maxWidth: 1200, margin: "0 auto" },
-  main:       { flex: 1 },
-  greeting:   { fontSize: 26, fontWeight: 800, margin: 0, color: "#1a1a1a" },
-  sub:        { color: "#888", fontSize: 15, marginTop: 4, marginBottom: 20 },
-  searchBar:  { display: "flex", alignItems: "center", gap: 12, background: "#fff", borderRadius: 16, padding: "14px 18px", boxShadow: "0 2px 16px #0001", marginBottom: 24 },
-  searchInput:{ flex: 1, border: "none", outline: "none", fontSize: 16, color: "#1a1a1a", background: "transparent" },
-  clear:      { background: "#eee", border: "none", borderRadius: "50%", width: 26, height: 26, cursor: "pointer", color: "#888" },
-  loadingMsg: { textAlign: "center", color: "#f6a623", padding: 24, fontSize: 18 },
-  aiBox:      { background: "#fff", borderRadius: 16, padding: 20, boxShadow: "0 2px 16px #0001", border: "1px solid #f0e8d0" },
-  aiHeader:   { display: "flex", alignItems: "center", gap: 12, marginBottom: 16 },
-  aiTag:      { background: "linear-gradient(135deg, #f6a623, #f97316)", color: "#fff", fontSize: 13, fontWeight: 700, padding: "4px 12px", borderRadius: 20 },
-  aiDesc:     { color: "#888", fontSize: 14 },
-  grid:       { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 },
-  sugCard:    { display: "flex", alignItems: "center", gap: 10, background: "#fafafa", borderRadius: 12, padding: "12px 14px", border: "1px solid #f0f0f0" },
-  emoji:      { fontSize: 28 },
-  info:       { flex: 1 },
-  iName:      { fontWeight: 700, fontSize: 14, color: "#1a1a1a" },
-  iReason:    { color: "#888", fontSize: 12, marginTop: 2 },
-  iPrice:     { color: "#f6a623", fontWeight: 700, fontSize: 14, marginTop: 4 },
-  addBtn:     { background: "#f6a623", border: "none", color: "#000", fontWeight: 700, fontSize: 13, padding: "6px 12px", borderRadius: 8, cursor: "pointer" },
-  empty:      { textAlign: "center", padding: "60px 20px", background: "#fff", borderRadius: 16, boxShadow: "0 2px 16px #0001" },
-  cart:       { width: 300, background: "#fff", borderRadius: 16, padding: 20, boxShadow: "0 2px 16px #0001", height: "fit-content", position: "sticky", top: 80 },
-  cartTitle:  { fontSize: 18, fontWeight: 800, marginTop: 0, marginBottom: 16, color: "#1a1a1a" },
-  cartItem:   { display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #f5f5f5" },
-  ciName:     { fontSize: 14, fontWeight: 600, color: "#1a1a1a" },
-  ciPrice:    { fontSize: 13, color: "#888", marginTop: 2 },
-  qty:        { display: "flex", alignItems: "center", gap: 6 },
-  qBtn:       { background: "#f1f1f1", border: "none", width: 26, height: 26, borderRadius: 6, cursor: "pointer", fontWeight: 700 },
-  qNum:       { fontWeight: 700, minWidth: 18, textAlign: "center" },
-  total:      { display: "flex", justifyContent: "space-between", padding: "12px 0", fontWeight: 700, fontSize: 16, borderTop: "2px solid #f0f0f0", marginTop: 8 },
-  checkout:   { width: "100%", padding: 14, background: "linear-gradient(135deg, #f6a623, #f97316)", border: "none", borderRadius: 12, color: "#000", fontWeight: 800, fontSize: 15, cursor: "pointer", marginTop: 8 },
+  page:           { minHeight: "100vh", background: "#f5f5f5", fontFamily: "'Segoe UI', sans-serif" },
+  header:         { background: "#fff", borderBottom: "1px solid #eee", padding: "0 24px", height: 60, display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 8px #0001" },
+  headerLeft:     { display: "flex", alignItems: "center", gap: 14 },
+  logo:           { fontWeight: 800, fontSize: 18, color: "#1a1a1a" },
+  locPill:        { padding: "5px 12px", borderRadius: 20, background: "#f5f5f5", fontSize: 13, color: "#666", cursor: "pointer", border: "1px solid #eee" },
+  locFound:       { background: "#fff8ee", border: "1px solid #f6a62333", color: "#333" },
+  locDenied:      { background: "#fff0f0", border: "1px solid #f8717133", color: "#888" },
+  headerRight:    { display: "flex", alignItems: "center", gap: 12 },
+  userName:       { fontSize: 14, color: "#555" },
+  logoutBtn:      { padding: "6px 14px", borderRadius: 8, border: "1px solid #ddd", background: "#fff", cursor: "pointer", fontSize: 13, color: "#555" },
+  shopDropdown:   { background: "#fff", border: "1px solid #eee", borderRadius: 12, margin: "8px 24px", padding: 16, boxShadow: "0 4px 20px #0001" },
+  shopDropTitle:  { fontSize: 13, fontWeight: 700, color: "#333", marginBottom: 10, marginTop: 0 },
+  shopRow:        { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 12px", borderRadius: 8, marginBottom: 6, background: "#fafafa", border: "1px solid #f0f0f0" },
+  shopRowBest:    { background: "#fff8ee", border: "1px solid #f6a62333" },
+  shopName:       { fontSize: 13, fontWeight: 600, color: "#1a1a1a", marginBottom: 2 },
+  shopAddr:       { fontSize: 12, color: "#888" },
+  shopMeta:       { textAlign: "right" },
+  shopDist:       { display: "block", fontSize: 14, fontWeight: 700, color: "#f6a623" },
+  shopTime:       { display: "block", fontSize: 12, color: "#888", marginTop: 2 },
+  closeShops:     { marginTop: 8, width: "100%", padding: "8px 0", borderRadius: 8, border: "1px solid #eee", background: "#fafafa", cursor: "pointer", fontSize: 13, color: "#888" },
+  body:           { display: "flex", gap: 24, padding: 24, maxWidth: 1200, margin: "0 auto" },
+  main:           { flex: 1 },
+  greeting:       { margin: "0 0 4px", fontSize: 24, fontWeight: 700, color: "#1a1a1a" },
+  sub:            { margin: "0 0 16px", color: "#888", fontSize: 15 },
+  shopBanner:     { background: "#fff", border: "1px solid #f6a62333", borderRadius: 14, padding: "14px 18px", marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center", boxShadow: "0 2px 8px #f6a62311" },
+  bannerLeft:     { display: "flex", alignItems: "center", gap: 12 },
+  bannerIcon:     { fontSize: 28 },
+  bannerName:     { fontSize: 14, fontWeight: 700, color: "#1a1a1a" },
+  bannerAddr:     { fontSize: 12, color: "#888", marginTop: 2 },
+  bannerRight:    { display: "flex", alignItems: "center", gap: 16 },
+  bannerStat:     { textAlign: "center" },
+  bannerStatVal:  { display: "block", fontSize: 16, fontWeight: 800, color: "#f6a623" },
+  bannerStatLbl:  { display: "block", fontSize: 11, color: "#aaa", marginTop: 2 },
+  bannerDivider:  { width: 1, height: 30, background: "#eee" },
+  searchBox:      { background: "#fff", borderRadius: 12, border: "1px solid #eee", display: "flex", alignItems: "center", padding: "0 14px", marginBottom: 16, boxShadow: "0 2px 8px #0001" },
+  searchIcon:     { fontSize: 18, marginRight: 10, color: "#aaa" },
+  searchInput:    { flex: 1, border: "none", outline: "none", fontSize: 15, padding: "14px 0", background: "transparent", color: "#1a1a1a" },
+  clearBtn:       { background: "none", border: "none", cursor: "pointer", color: "#aaa", fontSize: 16, padding: 4 },
+  resultsBox:     { background: "#fff", borderRadius: 14, border: "1px solid #eee", minHeight: 300, padding: 16 },
+  centreMsg:      { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 250, color: "#888", fontSize: 15 },
+  grid:           { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 14 },
+  card:           { background: "#fafafa", border: "1px solid #eee", borderRadius: 12, padding: 14, display: "flex", flexDirection: "column", gap: 6 },
+  cardEmoji:      { fontSize: 32 },
+  cardName:       { fontSize: 14, fontWeight: 600, color: "#1a1a1a" },
+  cardReason:     { fontSize: 12, color: "#888", flexGrow: 1 },
+  cardBottom:     { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 },
+  cardPrice:      { fontSize: 15, fontWeight: 700, color: "#f6a623" },
+  addBtn:         { padding: "5px 12px", borderRadius: 8, border: "none", background: "#f6a623", color: "#000", fontSize: 13, fontWeight: 700, cursor: "pointer" },
+  cartPanel:      { width: 300, background: "#fff", borderRadius: 14, border: "1px solid #eee", padding: 16, height: "fit-content", position: "sticky", top: 76, boxShadow: "0 2px 12px #0001" },
+  cartHeader:     { fontSize: 16, fontWeight: 700, color: "#1a1a1a", marginBottom: 14, display: "flex", alignItems: "center", gap: 8 },
+  cartBadge:      { background: "#f6a623", color: "#000", borderRadius: "50%", width: 22, height: 22, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700 },
+  emptyCart:      { color: "#aaa", fontSize: 14, textAlign: "center", padding: "30px 0" },
+  cartItems:      { display: "flex", flexDirection: "column", gap: 12, marginBottom: 16 },
+  cartItem:       { display: "flex", justifyContent: "space-between", alignItems: "center" },
+  cartItemLeft:   { display: "flex", alignItems: "center", gap: 10 },
+  cartItemName:   { fontSize: 13, fontWeight: 600, color: "#1a1a1a" },
+  cartItemPrice:  { fontSize: 12, color: "#888" },
+  qtyRow:         { display: "flex", alignItems: "center", gap: 8 },
+  qtyBtn:         { width: 26, height: 26, borderRadius: 6, border: "1px solid #ddd", background: "#fff", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" },
+  qtyNum:         { fontSize: 14, fontWeight: 600, minWidth: 16, textAlign: "center" },
+  cartSummary:    { borderTop: "1px solid #eee", paddingTop: 12, marginBottom: 12 },
+  summaryRow:     { display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 13, color: "#666" },
+  summaryLbl:     {},
+  summaryVal:     {},
+  summaryTotal:   { fontSize: 15, fontWeight: 700, color: "#1a1a1a", marginTop: 4 },
+  totalAmt:       { color: "#f6a623", fontSize: 17 },
+  deliveryNote:   { background: "#fff8ee", border: "1px solid #f6a62322", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#888", marginBottom: 12, textAlign: "center" },
+  checkoutBtn:    { width: "100%", padding: 14, borderRadius: 12, border: "none", background: "linear-gradient(135deg,#f6a623,#f97316)", color: "#000", fontSize: 15, fontWeight: 700, cursor: "pointer" },
 };
