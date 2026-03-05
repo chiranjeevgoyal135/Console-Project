@@ -27,6 +27,7 @@ export default function BuyerDashboard({ user, onLogout }) {
   const [locStatus,      setLocStatus]      = useState("detecting");
   const [showShops,      setShowShops]      = useState(false);
   const [showCheckout,   setShowCheckout]   = useState(false);
+  const [splitPlan,      setSplitPlan]      = useState(null);
   const [showRecipe,     setShowRecipe]     = useState(false);
   const [selectedProduct,setSelectedProduct]= useState(null);
   const [showCart,       setShowCart]       = useState(false);
@@ -69,7 +70,7 @@ export default function BuyerDashboard({ user, onLogout }) {
     setCart(prev => {
       const exists = prev.find(c => c.name === item.name);
       if (exists) return prev.map(c => c.name === item.name ? { ...c, qty: c.qty + 1 } : c);
-      return [...prev, { ...item, qty: 1 }];
+      return [...prev, { ...item, qty: 1, price: Number(item.price)||0 }];
     });
   }
 
@@ -87,15 +88,17 @@ export default function BuyerDashboard({ user, onLogout }) {
           cart={cart}
           setCart={setCart}
           shopInfo={shopInfo}
+          allShops={allShops}
           onBack={() => setShowCart(false)}
-          onCheckout={() => { setShowCart(false); setShowCheckout(true); }}
+          onCheckout={(plan) => { setSplitPlan(plan); setShowCart(false); setShowCheckout(true); }}
         />
         {showCheckout && (
           <CheckoutModal
             cart={cart}
             shopInfo={shopInfo}
+            splitPlan={splitPlan}
             onClose={() => setShowCheckout(false)}
-            onSuccess={() => setCart([])}
+            onSuccess={() => { setCart([]); setSplitPlan(null); }}
           />
         )}
       </>
@@ -242,7 +245,7 @@ export default function BuyerDashboard({ user, onLogout }) {
             setCart(prev => {
               const exists = prev.find(c => c.name === item.name);
               if (exists) return prev.map(c => c.name === item.name ? { ...c, qty: c.qty + 1 } : c);
-              return [...prev, { ...item, qty: 1 }];
+              return [...prev, { ...item, qty: 1, price: Number(item.price)||0 }];
             });
           }}
         />

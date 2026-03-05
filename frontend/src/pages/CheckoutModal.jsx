@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 
-export default function CheckoutModal({ cart, shopInfo, onClose, onSuccess }) {
+export default function CheckoutModal({ cart, shopInfo, splitPlan, onClose, onSuccess }) {
   const [step,      setStep]      = useState("review");
   const [payMethod, setPayMethod] = useState("card");
   const [error,     setError]     = useState("");
@@ -8,10 +8,16 @@ export default function CheckoutModal({ cart, shopInfo, onClose, onSuccess }) {
   const [paymentId, setPaymentId] = useState("");
   const [countdown, setCountdown] = useState(null);
 
-  const subtotal    = cart.reduce((s, c) => s + c.price * c.qty, 0);
-  const deliveryFee = shopInfo ? shopInfo.deliveryFee : 0;
+  const subtotal    = cart.reduce((s, c) => s + (Number(c.price)||0) * (Number(c.qty)||1), 0);
+  // If split plan exists, use combined fees and max delivery time
+  const deliveryFee = splitPlan
+    ? splitPlan.summary.totalFee
+    : (shopInfo ? shopInfo.deliveryFee : 0);
   const total       = subtotal + deliveryFee;
-  const delivMins   = shopInfo ? shopInfo.deliveryMins : 30;
+  const delivMins   = splitPlan
+    ? splitPlan.summary.maxDeliveryMins
+    : (shopInfo ? shopInfo.deliveryMins : 30);
+  const shopCount   = splitPlan ? splitPlan.summary.totalShops : 1;
 
   // Countdown timer after success
   useEffect(() => {
@@ -89,8 +95,8 @@ export default function CheckoutModal({ cart, shopInfo, onClose, onSuccess }) {
             {cart.map(item => (
               <div key={item.name} style={s.itemRow}>
                 <span style={{fontSize:22}}>{item.emoji}</span>
-                <span style={s.iName}>{item.name} × {item.qty}</span>
-                <span style={s.iAmt}>₹{item.price * item.qty}</span>
+                <span style={s.iName}>{item.name} × {Number(item.qty)||1}</span>
+                <span style={s.iAmt}>₹{(Number(item.price)||0) * (Number(item.qty)||1)}</span>
               </div>
             ))}
           </div>
@@ -99,7 +105,11 @@ export default function CheckoutModal({ cart, shopInfo, onClose, onSuccess }) {
             <div style={s.pRow}><span>Delivery fee</span><span>₹{deliveryFee}</span></div>
             <div style={{...s.pRow,...s.pTotal}}><span>Total</span><span style={{color:"#f6a623",fontSize:18}}>₹{total}</span></div>
           </div>
-          {shopInfo && <div style={s.delivBox}>📍 <strong>{shopInfo.name}</strong> · ~{delivMins} min delivery</div>}
+          <div style={s.delivBox}>
+            {splitPlan && splitPlan.summary.totalShops > 1
+              ? <>🏪 <strong>{shopCount} shops</strong> · longest delivery ~{delivMins} mins · ₹{deliveryFee} total fees</>
+              : shopInfo ? <>📍 <strong>{shopInfo.name}</strong> · ~{delivMins} min delivery</> : null}
+          </div>
           <div style={s.methTitle}>Payment Method</div>
           <div style={s.methRow}>
             {[{v:"card",l:"💳 Card"},{v:"upi",l:"📱 UPI"},{v:"cod",l:"💵 Cash"}].map(m=>(
@@ -146,7 +156,9 @@ export default function CheckoutModal({ cart, shopInfo, onClose, onSuccess }) {
               <div style={s.cdLabel}>🛵 Delivering in</div>
               <div style={s.cdTimer}>{fmtTime(countdown)}</div>
               <div style={s.cdSub}>
-                {shopInfo ? `from ${shopInfo.name}` : "from nearest store"}
+                {splitPlan && splitPlan.summary.totalShops > 1
+                  ? `order split across ${splitPlan.summary.totalShops} shops`
+                  : shopInfo ? `from ${shopInfo.name}` : "from nearest store"}
               </div>
               {/* Progress bar */}
               <div style={s.progBarWrap}>
@@ -175,8 +187,8 @@ export default function CheckoutModal({ cart, shopInfo, onClose, onSuccess }) {
               <div style={s.receiptTitle}>📄 Receipt</div>
               {cart.map(item => (
                 <div key={item.name} style={s.rItemRow}>
-                  <span>{item.emoji} {item.name} × {item.qty}</span>
-                  <span>₹{item.price * item.qty}</span>
+                  <span>{item.emoji} {item.name} × {Number(item.qty)||1}</span>
+                  <span>₹{(Number(item.price)||0) * (Number(item.qty)||1)}</span>
                 </div>
               ))}
               <div style={s.rDivider}/>

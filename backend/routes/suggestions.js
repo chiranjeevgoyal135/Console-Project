@@ -1,70 +1,97 @@
-// routes/suggestions.js — AI generates real branded products dynamically
 const express = require("express");
 const router  = express.Router();
+
+// Cache results — same query never hits Groq twice in same session
+const queryCache = {};
+
+function robustParse(text) {
+  if (!text?.trim()) return null;
+  let s = text.replace(/```json/gi,"").replace(/```/g,"").trim();
+  s = s.replace(/\}\s*\{/g,"},{").replace(/\}\s*\(\s*\{/g,"},{");
+  // 1. Direct parse
+  try { const r = JSON.parse(s); if (r) return r; } catch(_) {}
+  // 2. Extract first { ... }
+  const o1 = s.indexOf("{"), o2 = s.lastIndexOf("}");
+  if (o1 !== -1 && o2 > o1) {
+    try { const r = JSON.parse(s.slice(o1, o2+1)); if (r) return r; } catch(_) {}
+  }
+  // 3. Extract first [ ... ]
+  const a1 = s.indexOf("["), a2 = s.lastIndexOf("]");
+  if (a1 !== -1 && a2 > a1) {
+    try { const r = JSON.parse(s.slice(a1, a2+1)); if (Array.isArray(r)) return { matched:true, suggestions:r }; } catch(_) {}
+  }
+  return null;
+}
 
 router.post("/", async (req, res) => {
   const { query } = req.body;
   if (!query?.trim()) return res.json({ matched: false, suggestions: [] });
 
-  const prompt = `You are a smart product catalog AI for an Indian grocery app like Blinkit/Zepto.
+  // System prompt forces strict JSON-only output
+  const systemPrompt = `You are a JSON API. You ONLY output valid JSON. No explanations. No markdown. No extra text. Just JSON.`;
 
-User searched: "${query}"
+  const userPrompt = `Return 6 Indian grocery products for the search: "${query}"
 
-Return 6 real, specific Indian grocery products matching this search.
+Output this exact JSON structure:
+{"matched":true,"keyword":"${query}","suggestions":[{"name":"Amul Gold Full Cream Milk 1L","price":68,"emoji":"🥛","reason":"Premium full cream milk","brand":"Amul"},{"name":"Mother Dairy Milk 500ml","price":28,"emoji":"🥛","reason":"Fresh toned milk","brand":"Mother Dairy"}]}
+
 Rules:
-- Use REAL Indian brand names: Parle, Britannia, Amul, Maggi, Tata, Nestle, ITC, Haldirams, Dabur, Patanjali, Lay's, Kurkure, Oreo, Horlicks, Bournvita, MDH, Everest, Mother Dairy, Nandini, Yippee, Sunfeast, Hide&Seek, Good Day, McVities, Mondelez, etc.
-- Realistic Indian prices in INR
-- Different brands/variants for same category (if user says "biscuits" → Parle-G, Britannia, Oreo, Hide&Seek, Good Day, Monaco)
-- If symptom/occasion (fever → ginger tea, honey, lemon; movie night → popcorn, chips, cola)
-- If no grocery match → matched:false
+- Real Indian brands (Amul, Parle, Britannia, Tata, Maggi, Nestle, ITC, Dabur, etc.)
+- Real INR prices
+- If query has no grocery meaning, output: {"matched":false,"suggestions":[]}`;
 
-ONLY return valid JSON, no markdown, no extra text:
-{
-  "matched": true,
-  "keyword": "biscuits",
-  "suggestions": [
-    {"name":"Parle-G Original Gluco Biscuits 500g","price":40,"emoji":"🍪","reason":"India's most loved biscuit","brand":"Parle"},
-    {"name":"Britannia Good Day Butter Cookies 200g","price":35,"emoji":"🍪","reason":"Rich buttery cookies","brand":"Britannia"},
-    {"name":"Oreo Original Sandwich Biscuits 300g","price":85,"emoji":"🍪","reason":"Twist, lick and dunk","brand":"Mondelez"},
-    {"name":"Sunfeast Hide & Seek Choco 150g","price":45,"emoji":"🍪","reason":"Chocolate chip favourite","brand":"ITC"},
-    {"name":"McVities Digestive Biscuits 250g","price":75,"emoji":"🍪","reason":"Healthy whole wheat biscuit","brand":"McVities"},
-    {"name":"Monaco Classic Salted Crackers 200g","price":30,"emoji":"🍘","reason":"Light crispy snack","brand":"Parle"}
-  ]
-}`;
+  // Return cached result if available
+  const cacheKey = query.toLowerCase().trim();
+  if (queryCache[cacheKey]) {
+    console.log(`Cache hit: "${query}"`);
+    return res.json(queryCache[cacheKey]);
+  }
 
   try {
-    const groqRes  = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${process.env.GROQ_API_KEY}` },
       body: JSON.stringify({
-        model: "llama-3.3-70b-versatile", max_tokens: 900, temperature: 0.3,
-        messages: [{ role: "user", content: prompt }],
+        model: "llama-3.1-8b-instant",   // 8B model = separate quota, much faster
+        max_tokens: 600,
+        temperature: 0.1,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user",   content: userPrompt   },
+        ],
       }),
     });
-    const groqData = await groqRes.json();
-    const rawText  = groqData.choices?.[0]?.message?.content || "";
-    console.log("AI query:", query);
 
-    let parsed;
-    try {
-      let cleaned = rawText.replace(/```json|```/gi,"").trim();
-      cleaned = cleaned.replace(/\}\s*\{/g,"},{").replace(/\}\s*\(\s*\{/g,"},{");
-      parsed  = JSON.parse(cleaned);
-    } catch(e) {
-      console.error("JSON parse failed:", rawText.slice(0,200));
+    const groqData = await groqRes.json();
+
+    // Log any API-level errors
+    if (groqData.error) {
+      console.error("Groq API error:", groqData.error);
+      return res.json({ matched: false, suggestions: [] });
+    }
+
+    const rawText = groqData.choices?.[0]?.message?.content || "";
+    console.log(`AI query: "${query}" | raw (${rawText.length} chars):`, rawText.slice(0,120));
+
+    const parsed = robustParse(rawText);
+    if (!parsed) {
+      console.error("Parse failed. Full response:", rawText);
       return res.json({ matched: false, suggestions: [] });
     }
 
     if (parsed.suggestions) {
       parsed.suggestions = parsed.suggestions.map(s => ({
         ...s,
+        price: Number(s.price) || 50,
         stock: Math.floor(Math.random() * 50) + 5,
         unit:  "pack",
       }));
     }
+
+    queryCache[cacheKey] = parsed; // cache for session
     return res.json(parsed);
   } catch(e) {
-    console.error("Suggestions error:", e.message);
+    console.error("Suggestions fetch error:", e.message);
     return res.status(500).json({ matched: false, suggestions: [] });
   }
 });

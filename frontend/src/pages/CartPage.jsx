@@ -1,11 +1,14 @@
-// CartPage.jsx — Dedicated cart screen with AI "You may also like" suggestions
+// CartPage.jsx
+import CartSplitModal from "./CartSplitModal.jsx"; 
 import { useState, useEffect, useRef } from "react";
 
-export default function CartPage({ cart, setCart, shopInfo, onBack, onCheckout }) {
+export default function CartPage({ cart, setCart, shopInfo, allShops, onBack, onCheckout }) {
   const [suggestions, setSuggestions] = useState([]);
   const [bundles,     setBundles]     = useState([]);
   const [loadingSug,  setLoadingSug]  = useState(false);
   const [added,       setAdded]       = useState({});
+  const [showSplit,   setShowSplit]   = useState(false);
+  const [splitPlan,   setSplitPlan]   = useState(null);
   const fetchedRef = useRef(false);
 
   // Fetch AI suggestions based on cart contents
@@ -214,7 +217,7 @@ export default function CartPage({ cart, setCart, shopInfo, onBack, onCheckout }
                 </div>
               )}
 
-              <button style={s.checkoutBtn} onClick={onCheckout}>
+              <button style={s.checkoutBtn} onClick={() => allShops?.length > 1 ? setShowSplit(true) : onCheckout()}>
                 Proceed to Pay ₹{total - savings} →
               </button>
 
@@ -232,6 +235,15 @@ export default function CartPage({ cart, setCart, shopInfo, onBack, onCheckout }
           </div>
         )}
       </div>
+    {showSplit && (
+        <CartSplitModal
+          cart={cart}
+          shopInfo={shopInfo}
+          allShops={allShops || [shopInfo].filter(Boolean)}
+          onClose={() => setShowSplit(false)}
+          onConfirm={(plan) => { setSplitPlan(plan); setShowSplit(false); onCheckout(plan); }}
+        />
+      )}
     </div>
   );
 }
