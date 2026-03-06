@@ -7,6 +7,9 @@ const users = [
   { id: "b1", email: "buyer@test.com",   password: "buyer123",  role: "buyer",  name: "Rahul Sharma"  },
   { id: "b2", email: "buyer2@test.com",  password: "buyer123",  role: "buyer",  name: "Priya Singh"   },
 
+  // Owner
+  { id: "o1", email: "owner@test.com", password: "owner123", role: "owner", name: "Rajesh Agarwal" },
+
   // Sellers — each linked to a shop
   { id: "s1", email: "seller@test.com",  password: "seller123", role: "seller", name: "Amit Verma",   shopId: "shop_1", shopName: "QuickMart Delhi"     },
   { id: "s2", email: "seller2@test.com", password: "seller123", role: "seller", name: "Neha Gupta",   shopId: "shop_2", shopName: "Blinkit Hub Mumbai"  },

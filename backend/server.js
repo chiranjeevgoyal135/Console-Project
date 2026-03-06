@@ -16,6 +16,7 @@ app.use("/api/similar",          require("./routes/similar"));
 app.use("/api/cart-suggestions", require("./routes/cart-suggestions"));
 app.use("/api/shop-inventory",   require("./routes/shop-inventory"));
 app.use("/api/cart-split",        require("./routes/cart-split"));
+app.use("/api/analytics",         require("./routes/analytics"));
 
 app.get("/", (req, res) => res.json({ message: "Smarter Blinkit API ✅" }));
 

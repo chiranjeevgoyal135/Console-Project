@@ -4,5 +4,7 @@
 4.location feature is working succesfuly.
 5.barcode inventory added.
 6.Razor pay mock payment done.
-7. Recipe Agent added.
-8. smart suggestions.
+7.Recipe Agent added.
+8.smart suggestions.
+9.Smart Splitting.
+10.Owner Dashboard.
