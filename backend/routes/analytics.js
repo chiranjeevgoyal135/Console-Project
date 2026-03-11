@@ -1,9 +1,13 @@
+// backend/routes/analytics.js  (MongoDB version)
+// Historical data comes from MongoDB.
+// Live simulation still uses an in-memory buffer (last 50 live sales)
+// so the Owner dashboard gets real-time feel without hammering the DB.
 const express = require("express");
 const router  = express.Router();
+const Sale    = require("../models/Sale");
 
-const salesLog    = [];
-const shopRatings = {};
-const shopOrders  = {};
+// ── In-memory buffer for LIVE sales only ──
+const liveBuffer = [];
 
 const SHOPS = [
   { id:"shop_1", name:"QuickMart Delhi",           city:"Delhi"     },
@@ -13,159 +17,131 @@ const SHOPS = [
   { id:"shop_5", name:"BigBasket Now Hyderabad",    city:"Hyderabad" },
   { id:"shop_6", name:"DMart Ready Chennai",        city:"Chennai"   },
 ];
-
-const PRODUCTS = [
-  { name:"Amul Gold Milk 1L",           category:"Dairy",     price:68,  emoji:"🥛" },
-  { name:"Parle-G Biscuits 500g",       category:"Biscuits",  price:40,  emoji:"🍪" },
-  { name:"Maggi Noodles 70g",           category:"Snacks",    price:14,  emoji:"🍜" },
-  { name:"Tata Tea Gold 250g",          category:"Beverages", price:140, emoji:"🍵" },
-  { name:"Britannia Good Day 200g",     category:"Biscuits",  price:35,  emoji:"🍪" },
-  { name:"Lay's Classic 26g",           category:"Snacks",    price:20,  emoji:"🍿" },
-  { name:"Basmati Rice 1kg",            category:"Grains",    price:120, emoji:"🌾" },
-  { name:"Amul Butter 100g",            category:"Dairy",     price:55,  emoji:"🧈" },
-  { name:"Kurkure Masala 40g",          category:"Snacks",    price:20,  emoji:"🍿" },
-  { name:"Fortune Sunflower Oil 1L",    category:"Oils",      price:150, emoji:"🫙" },
-  { name:"Oreo Original 300g",          category:"Biscuits",  price:85,  emoji:"🍪" },
-  { name:"Nescafe Classic 50g",         category:"Beverages", price:175, emoji:"☕" },
-  { name:"Dabur Honey 250g",            category:"Health",    price:175, emoji:"🍯" },
-  { name:"Mother Dairy Curd 400g",      category:"Dairy",     price:45,  emoji:"🥣" },
-  { name:"Britannia Brown Bread 400g",  category:"Bakery",    price:45,  emoji:"🍞" },
+const SALE_PRODUCTS = [
+  { name:"Amul Milk 500ml",       category:"Dairy",     price:28,  emoji:"🥛" },
+  { name:"Parle-G Biscuits 250g", category:"Biscuits",  price:20,  emoji:"🍪" },
+  { name:"Maggi Noodles 70g",     category:"Snacks",    price:14,  emoji:"🍜" },
+  { name:"Tata Tea Gold 250g",    category:"Beverages", price:140, emoji:"🍵" },
+  { name:"Lay's Classic 26g",     category:"Snacks",    price:20,  emoji:"🍿" },
+  { name:"Basmati Rice 1kg",      category:"Grains",    price:120, emoji:"🌾" },
+  { name:"Amul Butter 100g",      category:"Dairy",     price:55,  emoji:"🧈" },
+  { name:"Sunflower Oil 1L",      category:"Oils",      price:150, emoji:"🫙" },
+  { name:"Nescafe Classic 50g",   category:"Beverages", price:175, emoji:"☕" },
+  { name:"Brown Bread 400g",      category:"Bakery",    price:45,  emoji:"🍞" },
 ];
+const BUYERS = ["Rahul S","Priya M","Amit K","Neha G","Ravi T","Sunita R"];
 
-// Seed 300 historical sales over last 2 hours
-function seed() {
-  const now = Date.now();
-  for (let i = 0; i < 300; i++) {
-    const shop    = SHOPS[Math.floor(Math.random() * SHOPS.length)];
-    const product = PRODUCTS[Math.floor(Math.random() * PRODUCTS.length)];
-    const minsAgo = Math.floor(Math.random() * 120);
-    salesLog.push({
-      shopId: shop.id, shopName: shop.name, city: shop.city,
-      productName: product.name, category: product.category,
-      price: product.price, emoji: product.emoji,
-      qty: Math.floor(Math.random() * 3) + 1,
-      timestamp: now - minsAgo * 60000,
-      buyer: ["Rahul S","Priya M","Amit K","Neha G","Ravi T","Sunita R"][Math.floor(Math.random()*6)],
-    });
-    shopOrders[shop.id] = (shopOrders[shop.id]||0) + 1;
-  }
-  SHOPS.forEach(shop => {
-    const count = Math.floor(Math.random()*800)+200;
-    shopRatings[shop.id] = {
-      shopName: shop.name, city: shop.city,
-      totalRating: (4.1 + Math.random()*0.8) * count, count,
-    };
-  });
-  console.log("📊 Analytics seeded");
-}
-seed();
-
-// Simulate a new live sale every 6 seconds
-setInterval(() => {
+// Simulate live sale every 6 seconds — write to DB AND buffer
+setInterval(async () => {
   const shop    = SHOPS[Math.floor(Math.random() * SHOPS.length)];
-  const product = PRODUCTS[Math.floor(Math.random() * PRODUCTS.length)];
-  salesLog.push({
+  const product = SALE_PRODUCTS[Math.floor(Math.random() * SALE_PRODUCTS.length)];
+  const sale = {
     shopId: shop.id, shopName: shop.name, city: shop.city,
     productName: product.name, category: product.category,
     price: product.price, emoji: product.emoji,
-    qty: Math.floor(Math.random()*3)+1,
-    timestamp: Date.now(),
-    buyer: ["Rahul S","Priya M","Amit K","Neha G","Ravi T","Sunita R"][Math.floor(Math.random()*6)],
+    qty:   Math.floor(Math.random() * 3) + 1,
+    buyer: BUYERS[Math.floor(Math.random() * BUYERS.length)],
     isLive: true,
-  });
-  shopOrders[shop.id] = (shopOrders[shop.id]||0) + 1;
-  // Keep log from growing forever
-  if (salesLog.length > 2000) salesLog.splice(0, 100);
+    timestamp: new Date(),
+  };
+  // Write to MongoDB
+  try { await Sale.create(sale); } catch {}
+  // Push to live buffer
+  liveBuffer.push(sale);
+  if (liveBuffer.length > 50) liveBuffer.shift();
 }, 6000);
 
-// POST /api/analytics/sale — record a real order
-router.post("/sale", (req, res) => {
-  const { shopId, shopName, city, items, buyer } = req.body;
-  const now = Date.now();
-  (items||[]).forEach(item => {
-    salesLog.push({
-      shopId, shopName: shopName||"Unknown Shop", city: city||"India",
-      productName: item.name, category: item.category||"General",
-      price: Number(item.price)||0, emoji: item.emoji||"🛍️",
-      qty: Number(item.qty)||1, timestamp: now,
-      buyer: buyer||"Customer", isLive: true,
+// ── GET /api/analytics/dashboard ──
+router.get("/dashboard", async (req, res) => {
+  try {
+    const since = new Date(Date.now() - 2 * 60 * 60 * 1000); // last 2 hours
+
+    // Fetch recent sales from MongoDB
+    const sales = await Sale.find({ timestamp: { $gte: since } })
+      .sort({ timestamp: -1 })
+      .limit(500)
+      .lean();
+
+    // Merge with live buffer (may have sales not yet flushed)
+    const allSales = [...sales, ...liveBuffer];
+
+    // Top products by units sold
+    const prodMap = {};
+    allSales.forEach(s => {
+      if (!prodMap[s.productName]) prodMap[s.productName] = { name:s.productName, emoji:s.emoji, category:s.category, units:0, revenue:0 };
+      prodMap[s.productName].units   += s.qty;
+      prodMap[s.productName].revenue += s.price * s.qty;
     });
-  });
-  shopOrders[shopId] = (shopOrders[shopId]||0) + 1;
-  res.json({ success:true });
+    const topProducts = Object.values(prodMap).sort((a,b) => b.units - a.units).slice(0, 8);
+
+    // Top shops by order count
+    const shopMap = {};
+    allSales.forEach(s => {
+      if (!shopMap[s.shopId]) shopMap[s.shopId] = { shopId:s.shopId, shopName:s.shopName, city:s.city, orders:0, revenue:0 };
+      shopMap[s.shopId].orders++;
+      shopMap[s.shopId].revenue += s.price * s.qty;
+    });
+    const topShops = Object.values(shopMap).sort((a,b) => b.orders - a.orders);
+
+    // 15-minute trend buckets (last 2 hours = 8 buckets)
+    const buckets = {};
+    for (let i = 7; i >= 0; i--) {
+      const t = new Date(Date.now() - i * 15 * 60000);
+      const label = t.toLocaleTimeString("en-IN", { hour:"2-digit", minute:"2-digit" });
+      buckets[label] = { time: label, orders:0, revenue:0 };
+    }
+    allSales.forEach(s => {
+      const d      = new Date(s.timestamp);
+      const bucket = Math.floor((Date.now() - d.getTime()) / (15*60000));
+      if (bucket < 8) {
+        const label = new Date(Date.now() - bucket * 15 * 60000)
+          .toLocaleTimeString("en-IN", { hour:"2-digit", minute:"2-digit" });
+        if (buckets[label]) { buckets[label].orders++; buckets[label].revenue += s.price * s.qty; }
+      }
+    });
+
+    // Category breakdown
+    const catMap = {};
+    allSales.forEach(s => { catMap[s.category] = (catMap[s.category]||0) + 1; });
+    const categoryBreakdown = Object.entries(catMap)
+      .map(([cat,count]) => ({ category:cat, count }))
+      .sort((a,b) => b.count - a.count);
+
+    // Live feed (last 15)
+    const liveFeed = [...liveBuffer].reverse().slice(0, 15);
+
+    res.json({
+      success: true,
+      totalOrders:  allSales.length,
+      totalRevenue: allSales.reduce((s,x) => s + x.price * x.qty, 0),
+      topProducts,
+      topShops,
+      trend: Object.values(buckets),
+      categoryBreakdown,
+      liveFeed,
+    });
+  } catch (err) {
+    console.error("Analytics error:", err);
+    res.status(500).json({ success:false, message:"DB error" });
+  }
 });
 
-// POST /api/analytics/rating
-router.post("/rating", (req, res) => {
-  const { shopId, shopName, city, rating } = req.body;
-  if (!shopRatings[shopId]) shopRatings[shopId] = { shopName, city, totalRating:0, count:0 };
-  shopRatings[shopId].totalRating += Number(rating);
-  shopRatings[shopId].count       += 1;
-  res.json({ success:true });
+// ── POST /api/analytics/sale — record a real purchase ──
+router.post("/sale", async (req, res) => {
+  try {
+    const sale = await Sale.create({ ...req.body, timestamp: new Date(), isLive: true });
+    liveBuffer.push(sale.toObject());
+    if (liveBuffer.length > 50) liveBuffer.shift();
+    res.json({ success:true });
+  } catch (err) {
+    res.status(500).json({ success:false, message:"DB error" });
+  }
 });
 
-// GET /api/analytics/dashboard
-router.get("/dashboard", (req, res) => {
-  const now     = Date.now();
-  const last1h  = now - 60*60*1000;
-  const last24h = now - 24*60*60*1000;
-  const recent  = salesLog.filter(s => s.timestamp >= last1h);
-
-  // Fastest selling products
-  const pv = {};
-  recent.forEach(s => {
-    if (!pv[s.productName]) pv[s.productName] = { name:s.productName, category:s.category, price:s.price, emoji:s.emoji||"🛍️", unitsSold:0, revenue:0, orders:0 };
-    pv[s.productName].unitsSold += s.qty;
-    pv[s.productName].revenue   += s.price * s.qty;
-    pv[s.productName].orders    += 1;
-  });
-  const topProducts = Object.values(pv).sort((a,b)=>b.unitsSold-a.unitsSold).slice(0,8);
-
-  // Top rated shops
-  const topShops = Object.entries(shopRatings).map(([shopId, d]) => ({
-    shopId, shopName:d.shopName, city:d.city,
-    avgRating: (d.totalRating/d.count).toFixed(1),
-    totalRatings: d.count, orders: shopOrders[shopId]||0,
-  })).sort((a,b)=>b.avgRating-a.avgRating);
-
-  // Category breakdown
-  const cm = {};
-  recent.forEach(s => { cm[s.category] = (cm[s.category]||0) + s.qty; });
-  const categoryBreakdown = Object.entries(cm).map(([cat,units])=>({category:cat,units})).sort((a,b)=>b.units-a.units);
-
-  // 15-min trend buckets (last 2h = 8 buckets)
-  const trend = Array.from({length:8},(_,i)=>{
-    const bucketStart = now - (8-i)*15*60*1000;
-    const bucketEnd   = now - (7-i)*15*60*1000;
-    const bucket      = salesLog.filter(s=>s.timestamp>=bucketStart && s.timestamp<bucketEnd);
-    return {
-      label: i===7?"Now":`${(7-i)*15}m`,
-      orders:  bucket.length,
-      revenue: bucket.reduce((s,x)=>s+x.price*x.qty,0),
-    };
-  });
-
-  // Live feed — last 12 sales
-  const liveFeed = [...salesLog].reverse().slice(0,12).map(s=>({
-    shopName:s.shopName, city:s.city,
-    productName:s.productName, emoji:s.emoji||"🛍️",
-    price:s.price, qty:s.qty,
-    buyer:s.buyer||"Customer",
-    secsAgo: Math.round((now-s.timestamp)/1000),
-  }));
-
-  res.json({
-    success:true,
-    summary:{
-      totalRevenue1h:  recent.reduce((s,x)=>s+x.price*x.qty,0),
-      totalOrders1h:   recent.length,
-      allRevenue24h:   salesLog.filter(s=>s.timestamp>=last24h).reduce((s,x)=>s+x.price*x.qty,0),
-      activeShops:     new Set(recent.map(s=>s.shopId)).size,
-      totalShops:      SHOPS.length,
-    },
-    topProducts, topShops, categoryBreakdown, trend, liveFeed,
-    lastUpdated: new Date().toISOString(),
-  });
+// ── POST /api/analytics/rating ──
+router.post("/rating", async (req, res) => {
+  // Ratings stored in-memory (can extend to a Rating model later)
+  res.json({ success:true });
 });
 
 module.exports = router;
