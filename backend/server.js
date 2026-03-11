@@ -17,6 +17,8 @@ app.use("/api/cart-suggestions", require("./routes/cart-suggestions"));
 app.use("/api/shop-inventory",   require("./routes/shop-inventory"));
 app.use("/api/cart-split",        require("./routes/cart-split"));
 app.use("/api/analytics",         require("./routes/analytics"));
+app.use("/api/money-map",          require("./routes/money-map"));
+app.use("/api/product-pairing",    require("./routes/product-pairing"));
 
 app.get("/", (req, res) => res.json({ message: "Smarter Blinkit API ✅" }));
 
@@ -25,4 +27,5 @@ app.listen(5000, () => {
   console.log("Groq:    ", process.env.GROQ_API_KEY    ? "✅" : "❌");
   console.log("Neo4j:   ", process.env.NEO4J_URI        ? "✅" : "❌");
   console.log("Razorpay:", process.env.RAZORPAY_KEY_ID  ? "✅" : "❌ (mock)");
+  console.log("HuggingFace:", process.env.HF_API_TOKEN   ? "✅" : "⚠️  (public API, no token)");
 });

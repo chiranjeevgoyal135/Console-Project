@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from "react";
+import MoneyMap from "./MoneyMap.jsx";
 
 const CAT_EMOJI = { Dairy:"🥛",Biscuits:"🍪",Snacks:"🍿",Beverages:"☕",Grains:"🌾",Oils:"🫙",Health:"🍯",Personal:"🧴",Veggies:"🥬",Bakery:"🍞",General:"🛍️" };
 
 export default function Storeboard({ user, onLogout }) {
   const [data,    setData]    = useState(null);
+  const [tab,     setTab]     = useState("dashboard"); // dashboard | moneymap
   const [loading, setLoading] = useState(true);
   const [pulse,   setPulse]   = useState(false);
   const [secsSince, setSecsSince] = useState(0);
@@ -58,12 +60,16 @@ export default function Storeboard({ user, onLogout }) {
           </div>
         </div>
         <div style={s.hdrRight}>
+<div style={s.tabRow}>
+            <button style={{...s.tabBtn,...(tab==="dashboard"?s.tabActive:{})}} onClick={()=>setTab("dashboard")}>📊 Dashboard</button>
+            <button style={{...s.tabBtn,...(tab==="moneymap"?s.tabActive:{})}}  onClick={()=>setTab("moneymap")}>💰 Money Map</button>
+          </div>
           <span style={s.uname}>👤 {user.name}</span>
           <button style={s.logoutBtn} onClick={onLogout}>Logout</button>
         </div>
       </div>
 
-      <div style={s.body}>
+      {tab === "moneymap" ? <MoneyMap onBack={()=>setTab("dashboard")} /> : <div style={s.body}>
         {/* ── STAT CARDS ── */}
         <div style={s.statsRow}>
           {[
@@ -232,7 +238,7 @@ export default function Storeboard({ user, onLogout }) {
           </div>
         </div>
 
-      </div>
+      </div>}
     </div>
   );
 }
@@ -247,6 +253,9 @@ const s = {
   liveDot:      { width:7, height:7, background:"#22c55e", borderRadius:"50%", display:"inline-block", transition:"box-shadow 0.3s" },
   hdrRight:     { display:"flex", alignItems:"center", gap:12 },
   uname:        { fontSize:13, color:"#64748b" },
+  tabRow:     { display:"flex", gap:6 },
+  tabBtn:     { padding:"6px 14px", borderRadius:20, border:"1px solid #1e293b", background:"transparent", cursor:"pointer", fontSize:12, fontWeight:600, color:"#64748b" },
+  tabActive:  { background:"#1e293b", border:"1px solid #334155", color:"#f1f5f9" },
   logoutBtn:    { padding:"5px 14px", borderRadius:8, border:"1px solid #1e293b", background:"transparent", cursor:"pointer", fontSize:13, color:"#94a3b8" },
   centreLoad:   { display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", minHeight:"80vh" },
   spinner:      { width:48, height:48, border:"4px solid #1e293b", borderTopColor:"#f6a623", borderRadius:"50%", animation:"spin 0.8s linear infinite" },

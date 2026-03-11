@@ -3,6 +3,7 @@ import CheckoutModal from "./CheckoutModal.jsx";
 import RecipeAgent   from "./RecipeAgent.jsx";
 import ProductModal  from "./ProductModal.jsx";
 import CartPage      from "./CartPage.jsx";
+import ProductPairing from "./ProductPairing.jsx";
 
 async function fetchNearestShops(lat, lng) {
   const res = await fetch(`http://localhost:5000/api/shops/nearest?lat=${lat}&lng=${lng}`);
@@ -31,6 +32,7 @@ export default function BuyerDashboard({ user, onLogout }) {
   const [showRecipe,     setShowRecipe]     = useState(false);
   const [selectedProduct,setSelectedProduct]= useState(null);
   const [showCart,       setShowCart]       = useState(false);
+  const [showPairing,    setShowPairing]    = useState(false);
   const debounceRef = useRef(null);
 
   // Location detection
@@ -79,6 +81,11 @@ export default function BuyerDashboard({ user, onLogout }) {
   }
 
   const cartCount = cart.reduce((s, i) => s + i.qty, 0);
+
+  // Show ProductPairing as full screen
+  if (showPairing) {
+    return <ProductPairing onBack={() => setShowPairing(false)} />;
+  }
 
   // Show CartPage as a full screen
   if (showCart) {
@@ -132,6 +139,11 @@ export default function BuyerDashboard({ user, onLogout }) {
 
         <div style={s.headerRight}>
           <span style={s.userName}>👤 {user.name}</span>
+
+          {/* Smart Pairing button */}
+          <button style={s.pairingBtn} onClick={() => setShowPairing(true)}>
+            🧠 Smart Pairing
+          </button>
 
           {/* Cart button */}
           <button style={s.cartBtn} onClick={() => setShowCart(true)}>
@@ -279,6 +291,7 @@ const s = {
   shopMeta:       { color:"#aaa", fontSize:12 },
   headerRight:    { display:"flex", alignItems:"center", gap:12, marginLeft:"auto" },
   userName:       { fontSize:13, color:"#aaa", whiteSpace:"nowrap" },
+  pairingBtn: { padding:"7px 14px", background:"linear-gradient(135deg,#1a0533,#0d1f35)", border:"1px solid #7c3aed", borderRadius:20, color:"#c4b5fd", fontSize:13, cursor:"pointer", fontWeight:600, fontFamily:"inherit", whiteSpace:"nowrap" },
   cartBtn:        { position:"relative", padding:"7px 16px", borderRadius:10, border:"none", background:"linear-gradient(135deg,#f6a623,#f97316)", color:"#000", fontSize:14, fontWeight:700, cursor:"pointer" },
   cartBadge:      { position:"absolute", top:-6, right:-6, background:"#dc2626", color:"#fff", borderRadius:"50%", width:18, height:18, fontSize:11, fontWeight:800, display:"flex", alignItems:"center", justifyContent:"center" },
   logoutBtn:      { padding:"6px 14px", borderRadius:8, border:"1px solid #444", background:"transparent", cursor:"pointer", fontSize:13, color:"#ccc" },
